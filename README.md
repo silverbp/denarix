@@ -1,7 +1,8 @@
 # denarix
 
-A double-entry accounting system: a Postgres-backed ledger schema, a gRPC API server (`cmd/denarix`),
-and a CLI client (`cmd/dxctl`). Covers core ledger accounting, parties, trading documents,
+A double-entry accounting system you host yourself, so you keep complete control over your own
+data. It ships as a Postgres-backed ledger schema, a gRPC API server (`cmd/denarix`), and a CLI
+client (`cmd/dxctl`). Covers core ledger accounting, parties, trading documents,
 banking/reconciliation, period close, tax, and reporting, with passkey (WebAuthn)-based auth.
 
 ## Quick start
