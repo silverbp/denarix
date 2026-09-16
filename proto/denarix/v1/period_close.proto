@@ -1,0 +1,73 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/type/date.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+service PeriodCloseService {
+  rpc TriggerClose(TriggerCloseRequest) returns (TriggerCloseResponse);
+  // Undoes the latest unreversed close: marks it reversed and posts a
+  // mirrored transaction for every entry it generated (including its Income
+  // Summary sweep into Retained Earnings), dated at that close's period_end.
+  // Closes stack with no cascade, so this is FAILED_PRECONDITION when a later
+  // unreversed close exists (reverse that one first) or when the close is
+  // already reversed. Re-closing afterwards regenerates fresh closing entries.
+  rpc ReverseClose(ReverseCloseRequest) returns (ReverseCloseResponse);
+  rpc GetPeriodClose(GetPeriodCloseRequest) returns (GetPeriodCloseResponse);
+  rpc ListPeriodCloses(ListPeriodClosesRequest) returns (ListPeriodClosesResponse);
+}
+
+message PeriodClose {
+  int64 id = 1;
+  int64 business_id = 2;
+  google.type.Date period_start = 3;
+  google.type.Date period_end = 4;
+  int32 income_summary_account_id = 5;
+  int32 retained_earnings_account_id = 6;
+  google.protobuf.Timestamp closed_at = 7;
+  optional google.protobuf.Timestamp reversed_at = 8;
+  optional int64 created_by_user_id = 9;
+  // Every ledger_transaction this close generated (or, for a reversed
+  // close, generated at the time it ran).
+  repeated int64 generated_ledger_transaction_ids = 10;
+}
+
+message TriggerCloseRequest {
+  int64 business_id = 1;
+  google.type.Date period_end = 2;
+}
+
+message TriggerCloseResponse {
+  PeriodClose period_close = 1;
+}
+
+message ReverseCloseRequest {
+  // Must be the latest unreversed close for its business.
+  int64 id = 1;
+}
+
+message ReverseCloseResponse {
+  PeriodClose period_close = 1;
+}
+
+message GetPeriodCloseRequest {
+  int64 id = 1;
+}
+
+message GetPeriodCloseResponse {
+  PeriodClose period_close = 1;
+}
+
+message ListPeriodClosesRequest {
+  int64 business_id = 1;
+}
+
+message ListPeriodClosesResponse {
+  repeated PeriodClose period_closes = 1;
+}

@@ -1,0 +1,54 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// AuthService bridges the browser-driven WebAuthn ceremony
+// (internal/server/httpauth.go) to dxctl: the browser hands the CLI's
+// loopback listener a short-lived one-time code
+// (internal/auth/authcode.go), which the CLI exchanges here for real
+// tokens over the normal gRPC channel. These three RPCs are the only ones
+// reachable without a valid access token — see the auth interceptor's
+// publicMethods allowlist.
+service AuthService {
+  rpc ExchangeCode(ExchangeCodeRequest) returns (ExchangeCodeResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+message ExchangeCodeRequest {
+  string code = 1;
+  // A human-readable label for this session, e.g. "dxctl on <hostname>" —
+  // stored on user_session for the user to recognize in a future "list my
+  // sessions" UI.
+  string client_name = 2;
+}
+
+message ExchangeCodeResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_token_expires_at = 3;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+  string client_name = 2;
+}
+
+message RefreshTokenResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_token_expires_at = 3;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message LogoutResponse {}

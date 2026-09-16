@@ -1,0 +1,360 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "denarix/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+service ContactService {
+  rpc GetContact(GetContactRequest) returns (GetContactResponse);
+  rpc ListContacts(ListContactsRequest) returns (ListContactsResponse);
+  rpc CreateContact(CreateContactRequest) returns (CreateContactResponse);
+  rpc UpdateContact(UpdateContactRequest) returns (UpdateContactResponse);
+  rpc DeactivateContact(DeactivateContactRequest) returns (DeactivateContactResponse);
+}
+
+// ItemService: the sales/purchase catalog (formerly the service catalog). An Item is
+// anything that can appear as a line on an estimate or invoice; item_type says how the
+// business treats it - see Item.item_type.
+service ItemService {
+  rpc GetItem(GetItemRequest) returns (GetItemResponse);
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse);
+  rpc CreateItem(CreateItemRequest) returns (CreateItemResponse);
+  rpc UpdateItem(UpdateItemRequest) returns (UpdateItemResponse);
+  rpc DeactivateItem(DeactivateItemRequest) returns (DeactivateItemResponse);
+}
+
+service TaxRateService {
+  rpc GetTaxRate(GetTaxRateRequest) returns (GetTaxRateResponse);
+  rpc ListTaxRates(ListTaxRatesRequest) returns (ListTaxRatesResponse);
+  rpc CreateTaxRate(CreateTaxRateRequest) returns (CreateTaxRateResponse);
+  rpc UpdateTaxRate(UpdateTaxRateRequest) returns (UpdateTaxRateResponse);
+  rpc DeactivateTaxRate(DeactivateTaxRateRequest) returns (DeactivateTaxRateResponse);
+}
+
+// Customer is present only when this contact plays the customer (AR) role -
+// its existence is the flag, not a boolean on Contact. ledger_account_id is
+// that customer's own AR sub-ledger account, rolled up under a business's
+// "Accounts Receivable" container account (ledger_account.parent_account_id).
+message Customer {
+  int64 id = 1;
+  int64 contact_id = 2;
+  optional int32 ledger_account_id = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// Same pattern as Customer, for the vendor (AP) role.
+message Vendor {
+  int64 id = 1;
+  int64 contact_id = 2;
+  optional int32 ledger_account_id = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message Contact {
+  reserved 3, 5, 6;
+  reserved "ledger_account_id", "is_customer", "is_vendor";
+
+  int64 id = 1;
+  int64 business_id = 2;
+  string contact_number = 4;
+  string name = 7;
+  optional string email = 8;
+  optional string phone = 9;
+  optional int32 payment_terms_days = 10;
+  Decimal credit_limit = 11;
+  bool is_active = 12;
+  optional int64 created_by_user_id = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  optional string billing_address_line1 = 16;
+  optional string billing_address_line2 = 17;
+  optional string billing_city = 18;
+  optional string billing_state = 19;
+  optional string billing_postal_code = 20;
+  optional string billing_country = 21;
+  optional Customer customer = 22;
+  optional Vendor vendor = 23;
+  // See Business.resource_version.
+  int64 resource_version = 24;
+}
+
+message GetContactRequest {
+  int64 id = 1;
+}
+
+message GetContactResponse {
+  Contact contact = 1;
+}
+
+message ListContactsRequest {
+  int64 business_id = 1;
+  // By default only active contacts are returned; set to also include
+  // inactive (deactivated) ones.
+  bool include_inactive = 2;
+}
+
+message ListContactsResponse {
+  repeated Contact contacts = 1;
+}
+
+message CreateContactRequest {
+  reserved 2, 17, 18;
+  reserved "ledger_account_id", "customer_ledger_account_id", "vendor_ledger_account_id";
+
+  int64 business_id = 1;
+  string contact_number = 3;
+  // Setting either (or both) provisions a customer/vendor row for the new
+  // contact - see Contact.customer/vendor - and auto-creates that role's
+  // own AR/AP sub-ledger account (named after this contact, parented under
+  // the business's system AR/AP container). There is no way to point it at
+  // an existing account instead - every customer/vendor gets its own.
+  bool is_customer = 4;
+  bool is_vendor = 5;
+  string name = 6;
+  optional string email = 7;
+  optional string phone = 8;
+  optional int32 payment_terms_days = 9;
+  optional Decimal credit_limit = 10;
+  optional string billing_address_line1 = 11;
+  optional string billing_address_line2 = 12;
+  optional string billing_city = 13;
+  optional string billing_state = 14;
+  optional string billing_postal_code = 15;
+  optional string billing_country = 16;
+}
+
+message CreateContactResponse {
+  Contact contact = 1;
+}
+
+message UpdateContactRequest {
+  reserved 5;
+  reserved "ledger_account_id";
+
+  int64 id = 1;
+  optional string name = 2;
+  optional string email = 3;
+  optional string phone = 4;
+  optional int32 payment_terms_days = 6;
+  optional Decimal credit_limit = 7;
+  optional string billing_address_line1 = 8;
+  optional string billing_address_line2 = 9;
+  optional string billing_city = 10;
+  optional string billing_state = 11;
+  optional string billing_postal_code = 12;
+  optional string billing_country = 13;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 14;
+}
+
+message UpdateContactResponse {
+  Contact contact = 1;
+}
+
+message DeactivateContactRequest {
+  int64 id = 1;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 2;
+}
+
+message DeactivateContactResponse {
+  Contact contact = 1;
+}
+
+message Item {
+  reserved 10;
+  reserved "default_tax_rate";
+
+  int64 id = 1;
+  int64 business_id = 2;
+  string item_code = 3;
+  // How the business treats this item - one of the schema's string enums
+  // (same convention as Invoice.invoice_type), not a proto enum:
+  //   SERVICE       - labour/time, nothing physical
+  //   NON_INVENTORY - a physical product whose stock isn't tracked
+  //   INVENTORY     - a physical product whose on-hand quantity is tracked
+  // Only the classification exists so far; INVENTORY carries no quantity or
+  // COGS behaviour yet. More modes are expected.
+  string item_type = 18;
+  string name = 4;
+  optional string description = 5;
+  string unit_of_measure = 6;
+  Decimal cost_price = 7;
+  Decimal retail_price = 8;
+  bool is_taxable = 9;
+  // References tax_rate.id - unlike invoice_line_item/estimate_line_item,
+  // an item is catalog data, not a historical transaction, so there's no
+  // need to also snapshot a decimal rate alongside the reference.
+  optional int64 default_tax_rate_id = 15;
+  // The revenue/expense ledger_account every invoice line for this item
+  // posts to (snapshotted onto invoice_line_item.ledger_account_id at
+  // posting time; not overridable per line). Required by CreateItem; only
+  // nullable here because pre-catalog rows may predate the rule.
+  optional int32 default_ledger_account_id = 16;
+  bool is_active = 11;
+  optional int64 created_by_user_id = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+  // See Business.resource_version.
+  int64 resource_version = 17;
+}
+
+message GetItemRequest {
+  int64 id = 1;
+}
+
+message GetItemResponse {
+  Item item = 1;
+}
+
+message ListItemsRequest {
+  int64 business_id = 1;
+  // By default only active items are returned; set to also include
+  // inactive (deactivated) ones.
+  bool include_inactive = 2;
+}
+
+message ListItemsResponse {
+  repeated Item items = 1;
+}
+
+message CreateItemRequest {
+  reserved 9;
+  reserved "default_tax_rate";
+
+  int64 business_id = 1;
+  string item_code = 2;
+  // See Item.item_type. Defaults to SERVICE when unset.
+  optional string item_type = 12;
+  string name = 3;
+  optional string description = 4;
+  optional string unit_of_measure = 5;
+  optional Decimal cost_price = 6;
+  Decimal retail_price = 7;
+  bool is_taxable = 8;
+  optional int64 default_tax_rate_id = 10;
+  // Required (rejected with INVALID_ARGUMENT when unset): every estimate/invoice line must
+  // reference an item, and an invoice line always posts to its item's
+  // default_ledger_account_id - so an item without one could never be invoiced. Stays
+  // `optional` on the wire only so UpdateItemRequest can distinguish "unchanged" from a value.
+  optional int32 default_ledger_account_id = 11;
+}
+
+message CreateItemResponse {
+  Item item = 1;
+}
+
+message UpdateItemRequest {
+  reserved 7;
+  reserved "default_tax_rate";
+
+  int64 id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional Decimal retail_price = 4;
+  optional Decimal cost_price = 5;
+  optional bool is_taxable = 6;
+  optional int64 default_tax_rate_id = 8;
+  optional int32 default_ledger_account_id = 9;
+  // See Item.item_type.
+  optional string item_type = 11;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 10;
+}
+
+message UpdateItemResponse {
+  Item item = 1;
+}
+
+message DeactivateItemRequest {
+  int64 id = 1;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 2;
+}
+
+message DeactivateItemResponse {
+  Item item = 1;
+}
+
+message TaxRate {
+  int64 id = 1;
+  int64 business_id = 2;
+  string name = 3;
+  Decimal rate = 4;
+  int32 tax_liability_account_id = 5;
+  bool is_active = 6;
+  optional int64 created_by_user_id = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  // See Business.resource_version.
+  int64 resource_version = 10;
+}
+
+message GetTaxRateRequest {
+  int64 id = 1;
+}
+
+message GetTaxRateResponse {
+  TaxRate tax_rate = 1;
+}
+
+message ListTaxRatesRequest {
+  int64 business_id = 1;
+}
+
+message ListTaxRatesResponse {
+  repeated TaxRate tax_rates = 1;
+}
+
+message CreateTaxRateRequest {
+  int64 business_id = 1;
+  string name = 2;
+  Decimal rate = 3;
+  int32 tax_liability_account_id = 4;
+}
+
+message CreateTaxRateResponse {
+  TaxRate tax_rate = 1;
+}
+
+message UpdateTaxRateRequest {
+  int64 id = 1;
+  optional string name = 2;
+  optional Decimal rate = 3;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 4;
+}
+
+message UpdateTaxRateResponse {
+  TaxRate tax_rate = 1;
+}
+
+message DeactivateTaxRateRequest {
+  int64 id = 1;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 2;
+}
+
+message DeactivateTaxRateResponse {
+  TaxRate tax_rate = 1;
+}

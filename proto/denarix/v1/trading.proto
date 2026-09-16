@@ -1,0 +1,474 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "denarix/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+import "google/type/date.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// EstimateService: estimates have no ledger impact (nothing is owed until
+// they convert to an invoice — see docs/schema.md), so there's no posting
+// concern here, only the document lifecycle.
+service EstimateService {
+  rpc GetEstimate(GetEstimateRequest) returns (GetEstimateResponse);
+  rpc ListEstimates(ListEstimatesRequest) returns (ListEstimatesResponse);
+  rpc CreateEstimate(CreateEstimateRequest) returns (CreateEstimateResponse);
+  // UpdateEstimate edits header fields: notes, terms, expiration_date. Like
+  // UpdateInvoice, the identifying fields stay put: estimate_date, customer_id
+  // (the estimate converts into an invoice against that customer), and
+  // estimate_number (next_estimate_number continuity). Recreate for those.
+  rpc UpdateEstimate(UpdateEstimateRequest) returns (UpdateEstimateResponse);
+  rpc UpdateEstimateStatus(UpdateEstimateStatusRequest) returns (UpdateEstimateStatusResponse);
+  rpc UpdateEstimateLineItems(UpdateEstimateLineItemsRequest) returns (UpdateEstimateLineItemsResponse);
+  rpc GetEstimatePdf(GetEstimatePdfRequest) returns (GetEstimatePdfResponse);
+}
+
+// InvoiceService. Every line item references a catalog item and posts to
+// that item's default_ledger_account_id (the revenue/expense account it
+// hits - owned by the item, never chosen per line; see NewDocumentLineItem),
+// and the invoice's contact must have its own ledger_account_id (its AR/AP
+// account) — CreateInvoice posts the invoice to the ledger atomically
+// alongside creating it. UpdateInvoiceLineItems regenerates the linked
+// ledger transaction's entries in place when an already-posted invoice's
+// lines change, rather than rejecting the edit.
+service InvoiceService {
+  rpc GetInvoice(GetInvoiceRequest) returns (GetInvoiceResponse);
+  rpc ListInvoices(ListInvoicesRequest) returns (ListInvoicesResponse);
+  rpc CreateInvoice(CreateInvoiceRequest) returns (CreateInvoiceResponse);
+  // UpdateInvoice edits header fields with no ledger impact: notes, terms,
+  // due_date. Deliberately not editable here: invoice_date (it's the GL
+  // posting date - changing it would need a repost and interacts with the
+  // period lock), contact_id (changes which AR/AP account the invoice
+  // posts against, and would invalidate any existing payment_application),
+  // and invoice_number (collides with next_invoice_number continuity).
+  // Those stay cancel-and-recreate. Rejected with FAILED_PRECONDITION on a
+  // CANCELLED invoice.
+  rpc UpdateInvoice(UpdateInvoiceRequest) returns (UpdateInvoiceResponse);
+  // UpdateInvoiceStatus transitioning to CANCELLED reverses the invoice's
+  // ledger entries (a new transaction, debits/credits swapped - the
+  // original posting is untouched) and zeroes balance_due. Rejected with
+  // FAILED_PRECONDITION if any payment is still applied - void those first.
+  rpc UpdateInvoiceStatus(UpdateInvoiceStatusRequest) returns (UpdateInvoiceStatusResponse);
+  // UpdateInvoiceLineItems is rejected with FAILED_PRECONDITION on a
+  // CANCELLED invoice (its posting has already been reversed; re-posting
+  // would leave the reversal mismatched) and on a PAID one (void the payment
+  // first).
+  rpc UpdateInvoiceLineItems(UpdateInvoiceLineItemsRequest) returns (UpdateInvoiceLineItemsResponse);
+  rpc GetInvoicePdf(GetInvoicePdfRequest) returns (GetInvoicePdfResponse);
+}
+
+// PaymentService. CreatePayment optionally applies to one or more invoices
+// via `applications` (each invoice's own paid_amount/balance_due, flipping
+// status to PAID once fully paid) - a single payment isn't limited to one
+// invoice, since a real deposit often covers several at once. Applying is
+// independent of posting; CreatePayment additionally posts to the ledger
+// under the same condition as invoices — ledger_account_id (the cash/bank
+// account) set, and the contact has its own ledger_account_id. An
+// application is rejected if it would exceed the invoice's own remaining
+// balance_due, not just the payment's own amount, and only a SENT, OVERDUE
+// or PAID invoice accepts one - send a DRAFT first.
+service PaymentService {
+  rpc GetPayment(GetPaymentRequest) returns (GetPaymentResponse);
+  rpc ListPayments(ListPaymentsRequest) returns (ListPaymentsResponse);
+  rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+  // VoidPayment reverses a payment: every payment_application is removed
+  // and its invoice's paid_amount/balance_due/status restored, then (if the
+  // payment was posted) a reversing ledger transaction is posted and the
+  // payment itself soft-deleted. Rejected if already void.
+  rpc VoidPayment(VoidPaymentRequest) returns (VoidPaymentResponse);
+}
+
+message EstimateLineItem {
+  int64 id = 1;
+  int64 estimate_id = 2;
+  optional int64 item_id = 3;
+  int32 line_number = 4;
+  string description = 5;
+  Decimal quantity = 6;
+  Decimal unit_price = 7;
+  Decimal line_subtotal = 8;
+  bool is_taxable = 9;
+  optional int64 tax_rate_id = 10;
+  Decimal tax_amount = 11;
+  Decimal line_total = 12;
+}
+
+message Estimate {
+  int64 id = 1;
+  int64 business_id = 2;
+  int64 customer_id = 3;
+  string estimate_number = 4;
+  google.type.Date estimate_date = 5;
+  google.type.Date expiration_date = 6;
+  Decimal subtotal = 7;
+  Decimal total_tax_amount = 8;
+  Decimal total_amount = 9;
+  string status = 10;
+  optional string notes = 11;
+  optional string terms = 12;
+  optional int64 created_by_user_id = 13;
+  google.protobuf.Timestamp created_at = 14;
+  repeated EstimateLineItem line_items = 15;
+  // See Business.resource_version.
+  int64 resource_version = 16;
+}
+
+// NewDocumentLineItem is one line of an estimate or invoice as the caller
+// supplies it - the same shape for both documents, since an estimate line is
+// an invoice line minus the ledger account, and that never comes from the
+// request: an invoice line always posts to its item's
+// default_ledger_account_id (snapshotted onto invoice_line_item.ledger_account_id
+// at posting time), never a per-line choice. item_id is required: every line
+// references a catalog item (any item_type) belonging to the document's
+// business - there are no free-text lines, Xero/QuickBooks style. description
+// defaults to the item's name, and unit_price/is_taxable/tax_rate_id default
+// from the item's catalog entry (retail_price/is_taxable/default_tax_rate_id);
+// each of those may still be overridden per line. Inactive items are
+// rejected on new lines, and for an invoice so are items with no
+// default_ledger_account_id. See docs/schema.md, "item".
+message NewDocumentLineItem {
+  int64 item_id = 1;
+  int32 line_number = 2;
+  string description = 3;
+  Decimal quantity = 4;
+  Decimal unit_price = 5;
+  optional bool is_taxable = 6;
+  optional int64 tax_rate_id = 7;
+}
+
+message GetEstimateRequest {
+  int64 id = 1;
+}
+
+message GetEstimateResponse {
+  Estimate estimate = 1;
+}
+
+message ListEstimatesRequest {
+  int64 business_id = 1;
+  // By default only DRAFT/SENT estimates are returned; set to also include
+  // ACCEPTED/DECLINED/EXPIRED ones.
+  bool include_all = 2;
+}
+
+message ListEstimatesResponse {
+  repeated Estimate estimates = 1;
+}
+
+message CreateEstimateRequest {
+  int64 business_id = 1;
+  int64 customer_id = 2;
+  google.type.Date estimate_date = 3;
+  google.type.Date expiration_date = 4;
+  optional string notes = 5;
+  optional string terms = 6;
+  repeated NewDocumentLineItem line_items = 7;
+}
+
+message CreateEstimateResponse {
+  Estimate estimate = 1;
+}
+
+// UpdateEstimateRequest edits only header fields - see
+// EstimateService.UpdateEstimate for what's deliberately excluded and why.
+message UpdateEstimateRequest {
+  int64 id = 1;
+  optional string notes = 2;
+  optional string terms = 3;
+  optional google.type.Date expiration_date = 4;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 5;
+}
+
+message UpdateEstimateResponse {
+  Estimate estimate = 1;
+}
+
+message UpdateEstimateStatusRequest {
+  int64 id = 1;
+  string status = 2;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 3;
+}
+
+message UpdateEstimateStatusResponse {
+  Estimate estimate = 1;
+}
+
+// UpdateEstimateLineItemsRequest replaces an estimate's entire line item
+// set (not a per-line patch) and recomputes subtotal/total_tax_amount/
+// total_amount server-side, same as CreateEstimate.
+message UpdateEstimateLineItemsRequest {
+  int64 id = 1;
+  repeated NewDocumentLineItem line_items = 2;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 3;
+}
+
+message UpdateEstimateLineItemsResponse {
+  Estimate estimate = 1;
+}
+
+message GetEstimatePdfRequest {
+  int64 id = 1;
+}
+
+message GetEstimatePdfResponse {
+  bytes content = 1;
+}
+
+message InvoiceLineItem {
+  int64 id = 1;
+  int64 invoice_id = 2;
+  optional int64 item_id = 3;
+  optional int32 ledger_account_id = 4;
+  int32 line_number = 5;
+  string description = 6;
+  Decimal quantity = 7;
+  Decimal unit_price = 8;
+  Decimal line_subtotal = 9;
+  bool is_taxable = 10;
+  optional int64 tax_rate_id = 11;
+  Decimal tax_amount = 12;
+  Decimal line_total = 13;
+}
+
+message Invoice {
+  int64 id = 1;
+  int64 business_id = 2;
+  int64 contact_id = 3;
+  string invoice_type = 4;
+  optional int64 estimate_id = 5;
+  string invoice_number = 6;
+  google.type.Date invoice_date = 7;
+  google.type.Date due_date = 8;
+  Decimal subtotal = 9;
+  Decimal total_tax_amount = 10;
+  Decimal total_amount = 11;
+  Decimal paid_amount = 12;
+  Decimal balance_due = 13;
+  string status = 14;
+  optional string notes = 15;
+  optional string terms = 16;
+  optional int64 ledger_transaction_id = 17;
+  optional int64 created_by_user_id = 18;
+  google.protobuf.Timestamp created_at = 19;
+  repeated InvoiceLineItem line_items = 20;
+  // See Business.resource_version.
+  int64 resource_version = 21;
+}
+
+message GetInvoiceRequest {
+  int64 id = 1;
+}
+
+message GetInvoiceResponse {
+  Invoice invoice = 1;
+}
+
+message ListInvoicesRequest {
+  int64 business_id = 1;
+  // By default only open invoices are returned (not PAID or CANCELLED);
+  // set to also include those.
+  bool include_all = 2;
+}
+
+message ListInvoicesResponse {
+  repeated Invoice invoices = 1;
+}
+
+message CreateInvoiceRequest {
+  int64 business_id = 1;
+  int64 contact_id = 2;
+  string invoice_type = 3;
+  optional int64 estimate_id = 4;
+  // Required for PURCHASE (typically the vendor's own document number);
+  // ignored for SALES, which auto-numbers from the business's
+  // invoice_number_prefix/next_invoice_number.
+  optional string invoice_number = 5;
+  google.type.Date invoice_date = 6;
+  google.type.Date due_date = 7;
+  optional string notes = 8;
+  optional string terms = 9;
+  // May be left empty when estimate_id is set - the invoice is then built from that
+  // estimate's own line items (item_id/description/quantity/unit_price/is_taxable/
+  // tax_rate_id carried over as-is; ledger_account_id resolved fresh from each line's
+  // item.default_ledger_account_id, exactly as for any other line - see
+  // NewDocumentLineItem). Required otherwise.
+  repeated NewDocumentLineItem line_items = 10;
+}
+
+message CreateInvoiceResponse {
+  Invoice invoice = 1;
+}
+
+// UpdateInvoiceRequest edits only fields with no ledger impact - see
+// InvoiceService.UpdateInvoice for what's deliberately excluded and why.
+message UpdateInvoiceRequest {
+  int64 id = 1;
+  optional string notes = 2;
+  optional string terms = 3;
+  optional google.type.Date due_date = 4;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 5;
+}
+
+message UpdateInvoiceResponse {
+  Invoice invoice = 1;
+}
+
+message UpdateInvoiceStatusRequest {
+  int64 id = 1;
+  string status = 2;
+  // Only used when status is CANCELLED: the date to post the cancellation's
+  // reversing ledger transaction on. Defaults to invoice_date; set it to a
+  // date in the open period when the invoice falls in a closed one. Must not
+  // be earlier than invoice_date.
+  optional google.type.Date reversal_date = 4;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 3;
+}
+
+message UpdateInvoiceStatusResponse {
+  Invoice invoice = 1;
+}
+
+// UpdateInvoiceLineItemsRequest replaces an invoice's entire line item set
+// (not a per-line patch) and recomputes subtotal/total_tax_amount/
+// total_amount/balance_due server-side, same as CreateInvoice. If the
+// invoice is already posted (ledger_transaction_id set), its linked ledger
+// transaction's entries are regenerated in place from the new line items
+// rather than rejecting the edit — the transaction id itself doesn't
+// change, only its entries.
+message UpdateInvoiceLineItemsRequest {
+  int64 id = 1;
+  repeated NewDocumentLineItem line_items = 2;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 3;
+}
+
+message UpdateInvoiceLineItemsResponse {
+  Invoice invoice = 1;
+}
+
+// PaymentApplication: one invoice a payment is applied against, and how
+// much of it went there. A payment can have zero (unapplied), one, or
+// several of these - see payment_application in docs/schema.md.
+message PaymentApplication {
+  int64 id = 1;
+  int64 payment_id = 2;
+  int64 invoice_id = 3;
+  Decimal applied_amount = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// PaymentApplicationInput: one invoice/amount pair for CreatePaymentRequest
+// - see PaymentApplication.
+message PaymentApplicationInput {
+  int64 invoice_id = 1;
+  Decimal applied_amount = 2;
+}
+
+message Payment {
+  reserved 4;
+  reserved "invoice_id";
+
+  int64 id = 1;
+  int64 business_id = 2;
+  int64 contact_id = 3;
+  string payment_type = 5;
+  string payment_number = 6;
+  google.type.Date payment_date = 7;
+  Decimal amount = 8;
+  string payment_method = 9;
+  optional int32 ledger_account_id = 10;
+  optional string reference_number = 11;
+  optional string notes = 12;
+  optional int64 ledger_transaction_id = 13;
+  optional int64 created_by_user_id = 14;
+  google.protobuf.Timestamp created_at = 15;
+  repeated PaymentApplication applications = 16;
+}
+
+message GetPaymentRequest {
+  int64 id = 1;
+}
+
+message GetPaymentResponse {
+  Payment payment = 1;
+}
+
+message ListPaymentsRequest {
+  int64 business_id = 1;
+}
+
+message ListPaymentsResponse {
+  repeated Payment payments = 1;
+}
+
+// VoidPaymentRequest carries no resource_version precondition - payment has
+// no resource_version column (unlike bank_statement/invoice/tax_rate).
+message VoidPaymentRequest {
+  int64 id = 1;
+  // Date to post the void's reversing ledger transaction on (only matters for
+  // a posted payment). Defaults to payment_date; set it to a date in the open
+  // period when the payment falls in a closed one. Must not be earlier than
+  // payment_date.
+  optional google.type.Date reversal_date = 2;
+}
+
+message VoidPaymentResponse {
+  // The payment as it stood immediately before voiding - it no longer
+  // exists as a live row afterward (see VoidPayment), so there is nothing
+  // later to GetPayment.
+  Payment payment = 1;
+}
+
+message CreatePaymentRequest {
+  reserved 3;
+  reserved "invoice_id";
+
+  int64 business_id = 1;
+  int64 contact_id = 2;
+  string payment_type = 4;
+  string payment_number = 5;
+  google.type.Date payment_date = 6;
+  Decimal amount = 7;
+  string payment_method = 8;
+  optional int32 ledger_account_id = 9;
+  optional string reference_number = 10;
+  optional string notes = 11;
+  // Sum of applied_amount across these must not exceed amount. Each
+  // invoice_id gets its own paid_amount/balance_due update (see
+  // PaymentService's comment above).
+  repeated PaymentApplicationInput applications = 12;
+}
+
+message CreatePaymentResponse {
+  Payment payment = 1;
+}
+
+message GetInvoicePdfRequest {
+  int64 id = 1;
+}
+
+message GetInvoicePdfResponse {
+  bytes content = 1;
+}

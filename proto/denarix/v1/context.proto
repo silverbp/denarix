@@ -1,0 +1,184 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "denarix/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// EntityContextService: polymorphic AI-generated context (summaries,
+// categorization hints, anomaly flags, user notes) attached to any entity
+// elsewhere in the schema. entity_type/entity_id carry no DB foreign key
+// (they span many possible target tables), so the server validates
+// entity_type against a fixed allowlist and confirms entity_id both exists
+// and belongs to business_id (see internal/server/entity_ref.go) —
+// tenant isolation the schema itself can't enforce here.
+service EntityContextService {
+  rpc GetEntityContext(GetEntityContextRequest) returns (GetEntityContextResponse);
+  rpc ListEntityContext(ListEntityContextRequest) returns (ListEntityContextResponse);
+  rpc CreateEntityContext(CreateEntityContextRequest) returns (CreateEntityContextResponse);
+  // DeleteEntityContext soft-deletes a context row outright - for a note
+  // that shouldn't have been created at all. The designed way to correct a
+  // *stale* note is still supersession (CreateEntityContext's
+  // supersedes_ids), which keeps the trail; this is for removing one
+  // entirely.
+  rpc DeleteEntityContext(DeleteEntityContextRequest) returns (DeleteEntityContextResponse);
+}
+
+// AttachmentService: same polymorphic entity_type/entity_id pattern, for
+// files. File bytes are streamed through this API and land in an internal
+// object-storage backend (SeaweedFS locally - see docker-compose.yml,
+// internal/storage) that no caller ever addresses directly: UploadAttachment
+// streams bytes in, DownloadAttachment streams bytes back out, and the
+// backend's storage key never appears in the Attachment message. Every
+// read/write is gated by denarix's own auth (RequireBusinessRole) this way -
+// there are no unauthenticated, publicly-reachable attachment URLs.
+service AttachmentService {
+  rpc GetAttachment(GetAttachmentRequest) returns (GetAttachmentResponse);
+  rpc ListAttachments(ListAttachmentsRequest) returns (ListAttachmentsResponse);
+  rpc UploadAttachment(stream UploadAttachmentRequest) returns (UploadAttachmentResponse);
+  rpc DownloadAttachment(DownloadAttachmentRequest) returns (stream DownloadAttachmentResponse);
+  rpc DeleteAttachment(DeleteAttachmentRequest) returns (DeleteAttachmentResponse);
+}
+
+message EntityContext {
+  int64 id = 1;
+  int64 business_id = 2;
+  string entity_type = 3;
+  int64 entity_id = 4;
+  string context_type = 5;
+  string content = 6;
+  // Raw JSON text (not google.protobuf.Struct, to keep this a thin pass
+  // through to the JSONB column rather than a typed structure).
+  optional string metadata_json = 7;
+  optional string source = 8;
+  optional Decimal confidence = 9;
+  optional int64 superseded_by_id = 10;
+  optional int64 created_by_user_id = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+message GetEntityContextRequest {
+  int64 id = 1;
+}
+
+message GetEntityContextResponse {
+  EntityContext entity_context = 1;
+}
+
+message ListEntityContextRequest {
+  int64 business_id = 1;
+  string entity_type = 2;
+  int64 entity_id = 3;
+  // Defaults to current context only (superseded_by_id IS NULL), matching
+  // docs/schema.md's retrieval convention.
+  bool include_superseded = 4;
+}
+
+message ListEntityContextResponse {
+  repeated EntityContext entity_contexts = 1;
+}
+
+message CreateEntityContextRequest {
+  int64 business_id = 1;
+  string entity_type = 2;
+  int64 entity_id = 3;
+  string context_type = 4;
+  string content = 5;
+  optional string metadata_json = 6;
+  optional string source = 7;
+  optional Decimal confidence = 8;
+  // Rolls up old context rows into this new one: after creating it, each
+  // id here gets its superseded_by_id set to the new row — the batch
+  // rollup pattern docs/schema.md describes, without deleting the trail.
+  repeated int64 supersedes_ids = 9;
+}
+
+message CreateEntityContextResponse {
+  EntityContext entity_context = 1;
+}
+
+message DeleteEntityContextRequest {
+  int64 id = 1;
+}
+
+message DeleteEntityContextResponse {
+  EntityContext entity_context = 1;
+}
+
+// No storage_url/storage_key here by design - the object-storage backend
+// stays entirely server-side (see AttachmentService above). Read the file
+// itself via DownloadAttachment.
+message Attachment {
+  int64 id = 1;
+  int64 business_id = 2;
+  string entity_type = 3;
+  int64 entity_id = 4;
+  optional string original_filename = 5;
+  optional string content_type = 6;
+  optional int64 file_size_bytes = 7;
+  int32 display_sequence = 8;
+  optional int64 created_by_user_id = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+message GetAttachmentRequest {
+  int64 id = 1;
+}
+
+message GetAttachmentResponse {
+  Attachment attachment = 1;
+}
+
+message ListAttachmentsRequest {
+  int64 business_id = 1;
+  string entity_type = 2;
+  int64 entity_id = 3;
+}
+
+message ListAttachmentsResponse {
+  repeated Attachment attachments = 1;
+}
+
+// The first message on an UploadAttachment stream must carry metadata (and
+// only metadata); every message after that must carry a chunk. Any other
+// order is a client error.
+message UploadAttachmentRequest {
+  oneof data {
+    UploadAttachmentMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+message UploadAttachmentMetadata {
+  int64 business_id = 1;
+  string entity_type = 2;
+  int64 entity_id = 3;
+  optional string original_filename = 4;
+  optional string content_type = 5;
+  optional int32 display_sequence = 6;
+}
+
+message UploadAttachmentResponse {
+  Attachment attachment = 1;
+}
+
+message DownloadAttachmentRequest {
+  int64 id = 1;
+}
+
+message DownloadAttachmentResponse {
+  bytes chunk = 1;
+}
+
+message DeleteAttachmentRequest {
+  int64 id = 1;
+}
+
+message DeleteAttachmentResponse {
+  Attachment attachment = 1;
+}

@@ -1,0 +1,197 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "denarix/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// BusinessService is the first vertical slice through the stack (proto ->
+// sqlc -> service -> auth) and the template every later resource domain
+// follows.
+//
+// CreateBusiness is global-admin-only (auth.RequireGlobalAdmin) - nobody
+// else can create a business. The four invite RPCs open a business up to a
+// second user: CreateBusinessInvite is callable by a global admin (any
+// business) or that business's own OWNER/ADMIN
+// (auth.RequireGlobalAdminOrBusinessRole) and returns a one-time token,
+// shared with the invitee out-of-band - denarix never sends it. AcceptBusinessInvite
+// is callable by anyone authenticated, but only succeeds if both the token
+// is valid and the caller's own account email matches the invite's -
+// knowing/guessing the invited email alone isn't enough, since passkey
+// registration itself has no email-ownership verification.
+service BusinessService {
+  rpc GetBusiness(GetBusinessRequest) returns (GetBusinessResponse);
+  rpc ListMyBusinesses(ListMyBusinessesRequest) returns (ListMyBusinessesResponse);
+  rpc CreateBusiness(CreateBusinessRequest) returns (CreateBusinessResponse);
+  rpc UpdateBusiness(UpdateBusinessRequest) returns (UpdateBusinessResponse);
+  rpc DeactivateBusiness(DeactivateBusinessRequest) returns (DeactivateBusinessResponse);
+  rpc CreateBusinessInvite(CreateBusinessInviteRequest) returns (CreateBusinessInviteResponse);
+  rpc ListBusinessInvites(ListBusinessInvitesRequest) returns (ListBusinessInvitesResponse);
+  rpc RevokeBusinessInvite(RevokeBusinessInviteRequest) returns (RevokeBusinessInviteResponse);
+  rpc AcceptBusinessInvite(AcceptBusinessInviteRequest) returns (AcceptBusinessInviteResponse);
+}
+
+message Business {
+  int64 id = 1;
+  string name = 2;
+  optional string tax_id = 3;
+  optional string address_line1 = 4;
+  optional string address_line2 = 5;
+  optional string city = 6;
+  optional string state = 7;
+  optional string postal_code = 8;
+  optional string country = 9;
+  optional string phone = 10;
+  optional string email = 11;
+  optional int32 default_payment_terms_days = 12;
+  Decimal default_tax_rate = 13;
+  string invoice_number_prefix = 14;
+  string estimate_number_prefix = 15;
+  string timezone = 16;
+  string currency_code = 17;
+  bool is_active = 18;
+  optional int64 created_by_user_id = 19;
+  google.protobuf.Timestamp created_at = 20;
+  google.protobuf.Timestamp updated_at = 21;
+  // Kubernetes-style resourceVersion: a per-row counter the database bumps on every
+  // committed write to this row (any write - an UpdateBusiness, a DeactivateBusiness, or an
+  // internal side effect like claiming the next invoice number). Every mutable resource
+  // (Business, LedgerAccount, Contact, Service, TaxRate, Estimate, Invoice) carries one.
+  //
+  // Send it back on that resource's Update*/Deactivate* request to make the write
+  // conditional: if the row's current resource_version no longer matches, the write is
+  // rejected with ABORTED and nothing changes - re-read, reapply your edit to the fresh
+  // copy, and retry. Leaving it unset (0) writes unconditionally, same as omitting
+  // resourceVersion in k8s. Never compare versions across resources or do arithmetic on
+  // them; only equality against a value you read from the same row is meaningful.
+  int64 resource_version = 22;
+}
+
+message GetBusinessRequest {
+  int64 id = 1;
+}
+
+message GetBusinessResponse {
+  Business business = 1;
+}
+
+message ListMyBusinessesRequest {}
+
+message BusinessMembership {
+  Business business = 1;
+  string role = 2;
+}
+
+message ListMyBusinessesResponse {
+  repeated BusinessMembership memberships = 1;
+}
+
+message CreateBusinessRequest {
+  string name = 1;
+  optional string tax_id = 2;
+  optional string address_line1 = 3;
+  optional string address_line2 = 4;
+  optional string city = 5;
+  optional string state = 6;
+  optional string postal_code = 7;
+  optional string country = 8;
+  optional string phone = 9;
+  optional string email = 10;
+}
+
+message CreateBusinessResponse {
+  Business business = 1;
+}
+
+message UpdateBusinessRequest {
+  int64 id = 1;
+  optional string name = 2;
+  optional string tax_id = 3;
+  optional string address_line1 = 4;
+  optional string address_line2 = 5;
+  optional string city = 6;
+  optional string state = 7;
+  optional string postal_code = 8;
+  optional string country = 9;
+  optional string phone = 10;
+  optional string email = 11;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 12;
+}
+
+message UpdateBusinessResponse {
+  Business business = 1;
+}
+
+message DeactivateBusinessRequest {
+  int64 id = 1;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 2;
+}
+
+message DeactivateBusinessResponse {
+  Business business = 1;
+}
+
+// BusinessInvite never carries the raw token or its hash -
+// CreateBusinessInviteResponse is the only place the raw token ever
+// appears, shown exactly once.
+message BusinessInvite {
+  int64 id = 1;
+  int64 business_id = 2;
+  string email = 3;
+  string role = 4;
+  optional int64 invited_by_user_id = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  optional google.protobuf.Timestamp accepted_at = 8;
+  optional google.protobuf.Timestamp revoked_at = 9;
+}
+
+message CreateBusinessInviteRequest {
+  int64 business_id = 1;
+  string email = 2;
+  // OWNER, ADMIN, MEMBER, or VIEWER - see business_user.role.
+  string role = 3;
+}
+
+message CreateBusinessInviteResponse {
+  BusinessInvite invite = 1;
+  // The raw, unhashed token - shown exactly once. Share it with the
+  // invitee yourself (Slack, text, email); denarix never sends it anywhere.
+  string token = 2;
+}
+
+message ListBusinessInvitesRequest {
+  int64 business_id = 1;
+}
+
+message ListBusinessInvitesResponse {
+  repeated BusinessInvite invites = 1;
+}
+
+message RevokeBusinessInviteRequest {
+  int64 id = 1;
+}
+
+message RevokeBusinessInviteResponse {
+  BusinessInvite invite = 1;
+}
+
+message AcceptBusinessInviteRequest {
+  string token = 1;
+}
+
+message AcceptBusinessInviteResponse {
+  Business business = 1;
+  string role = 2;
+}

@@ -1,0 +1,102 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: denarix
+      POSTGRES_PASSWORD: denarix
+      POSTGRES_DB: denarix
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U denarix -d denarix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Object storage for attachment.storage_key (see internal/storage). Only ever addressed by
+  # cmd/denarix itself, over the docker network - no caller of AttachmentService ever sees a
+  # SeaweedFS URL; denarix/v1.AttachmentService.UploadAttachment/DownloadAttachment stream file
+  # bytes through the gRPC API instead (see proto/denarix/v1/context.proto). `server -s3 -filer`
+  # runs master+volume+filer+S3-gateway in one process, which is enough for local dev/test; a
+  # real deploy would split those out and put the S3 gateway behind real credentials.
+  seaweedfs:
+    image: chrislusf/seaweedfs
+    # s3-identities.json's credentials are dev-only (match internal/config's
+    # DENARIX_STORAGE_ACCESS_KEY/DENARIX_STORAGE_SECRET_KEY defaults) - a real deploy needs its own
+    # identity file with real, secret credentials, not this one.
+    command: "server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3-identities.json"
+    ports:
+      - "9333:9333" # master UI
+      - "8888:8888" # filer
+      - "8333:8333" # S3 API
+    volumes:
+      - seaweed_data:/data
+      - ./deploy/seaweedfs/s3-identities.json:/etc/seaweedfs/s3-identities.json:ro
+    healthcheck:
+      # Not an HTTP check against localhost:9333 - this binary binds its HTTP listener to the
+      # container's own IP, not loopback, so a curl/wget from inside the container itself
+      # (unlike from the host, where Docker's port mapping routes to the right address) gets
+      # "connection refused" even when the service is completely healthy. A liveness check is
+      # enough here anyway - nothing in this repo gates on service_healthy for this container.
+      test: ["CMD-SHELL", "pgrep weed || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Applies pending migrations and exits - a one-shot init step ahead of the
+  # `denarix` service (see cmd/denarix/main.go's runMigrate). Only needs the DB, so
+  # it doesn't wait on seaweedfs and doesn't need DENARIX_JWT_SECRET.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DENARIX_POSTGRES_DSN: postgres://denarix:denarix@db:5432/denarix?sslmode=disable
+    entrypoint: ["/usr/local/bin/denarix", "migrate"]
+
+  # The gRPC API server itself (see cmd/denarix). Config comes from a .env file
+  # in this directory - copy .env.example to .env and fill in DENARIX_JWT_SECRET
+  # before `docker compose up`; see docs/quickstart.md.
+  denarix:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "9090:9090" # gRPC API - what dxctl's --server points at
+      - "9091:9091" # plain HTTP - passkey (WebAuthn) registration/login pages
+    environment:
+      DENARIX_POSTGRES_DSN: postgres://denarix:denarix@db:5432/denarix?sslmode=disable
+      DENARIX_GRPC_ADDR: ":9090"
+      DENARIX_HTTP_ADDR: ":9091"
+      # Localhost defaults for `docker compose up` on your own machine -
+      # override in .env if you're exposing denarix beyond localhost, since the
+      # WebAuthn ceremony binds the passkey to whatever origin the browser
+      # is actually on.
+      DENARIX_PUBLIC_BASE_URL: ${DENARIX_PUBLIC_BASE_URL:-http://localhost:9091}
+      DENARIX_RP_ID: ${DENARIX_RP_ID:-localhost}
+      # No default here on purpose - config.Load() refuses to start without
+      # it, so an unset DENARIX_JWT_SECRET fails loudly in `docker compose logs
+      # denarix` rather than silently running unsecured. Copy .env.example to
+      # .env and fill it in before `docker compose up`.
+      DENARIX_JWT_SECRET: ${DENARIX_JWT_SECRET:-}
+      DENARIX_BOOTSTRAP_ADMIN_EMAIL: ${DENARIX_BOOTSTRAP_ADMIN_EMAIL:-}
+      DENARIX_STORAGE_ENDPOINT: seaweedfs:8333
+      DENARIX_STORAGE_ACCESS_KEY: seaweedfs
+      DENARIX_STORAGE_SECRET_KEY: seaweedfs
+      DENARIX_STORAGE_BUCKET: denarix-attachments
+
+volumes:
+  db_data:
+  seaweed_data:

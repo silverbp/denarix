@@ -1,0 +1,265 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "denarix/v1/common.proto";
+import "google/type/date.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+service ReportingService {
+  rpc GetTrialBalance(GetTrialBalanceRequest) returns (GetTrialBalanceResponse);
+  rpc GetBalanceSheet(GetBalanceSheetRequest) returns (GetBalanceSheetResponse);
+  rpc GetIncomeStatement(GetIncomeStatementRequest) returns (GetIncomeStatementResponse);
+  rpc GetGeneralLedger(GetGeneralLedgerRequest) returns (GetGeneralLedgerResponse);
+  rpc GetCustomerStatement(GetCustomerStatementRequest) returns (GetCustomerStatementResponse);
+
+  // PDF renderings of the reports above, each taking the same filter
+  // fields as its JSON counterpart.
+  rpc GetTrialBalancePdf(GetTrialBalancePdfRequest) returns (GetTrialBalancePdfResponse);
+  rpc GetBalanceSheetPdf(GetBalanceSheetPdfRequest) returns (GetBalanceSheetPdfResponse);
+  rpc GetIncomeStatementPdf(GetIncomeStatementPdfRequest) returns (GetIncomeStatementPdfResponse);
+  rpc GetGeneralLedgerPdf(GetGeneralLedgerPdfRequest) returns (GetGeneralLedgerPdfResponse);
+  rpc GetCustomerStatementPdf(GetCustomerStatementPdfRequest) returns (GetCustomerStatementPdfResponse);
+}
+
+message GetTrialBalanceRequest {
+  int64 business_id = 1;
+  google.type.Date as_of = 2;
+}
+
+message GetTrialBalanceResponse {
+  TrialBalance trial_balance = 1;
+}
+
+message TrialBalanceLine {
+  int32 account_id = 1;
+  string account_code = 2;
+  string account_name = 3;
+  Decimal debit = 4;
+  Decimal credit = 5;
+}
+
+message TrialBalance {
+  repeated TrialBalanceLine lines = 1;
+  Decimal total_debit = 2;
+  Decimal total_credit = 3;
+}
+
+message GetBalanceSheetRequest {
+  int64 business_id = 1;
+  google.type.Date as_of = 2;
+}
+
+message GetBalanceSheetResponse {
+  BalanceSheet balance_sheet = 1;
+}
+
+// account_id is 0 for the synthetic "Current Period Earnings" line, which
+// has no backing ledger_account (see docs/architecture.md#period-close).
+message BalanceSheetLine {
+  int32 account_id = 1;
+  string account_code = 2;
+  string account_name = 3;
+  Decimal balance = 4;
+}
+
+// One balance_sheet_category grouping (Long-term Assets, Current Assets &
+// Liabilities, Long-term Liabilities, Capital & Reserves). asset_lines and
+// liability_lines are which column a line prints in, not which category
+// it's grouped under - "Current Assets & Liabilities" mixes both in the
+// same section, matching a classic UK-style statutory balance sheet.
+message BalanceSheetSection {
+  string title = 1;
+  repeated BalanceSheetLine asset_lines = 2;
+  repeated BalanceSheetLine liability_lines = 3;
+  Decimal total_assets = 4;
+  Decimal total_liabilities = 5;
+}
+
+message BalanceSheet {
+  repeated BalanceSheetSection sections = 1;
+  // total_assets - total_liabilities within the "Current Assets &
+  // Liabilities" section only.
+  Decimal net_current_assets = 2;
+  // Long-term Assets' total_assets + net_current_assets.
+  Decimal total_assets_less_current_liabilities = 3;
+  // total_assets_less_current_liabilities - Long-term Liabilities' total_liabilities.
+  Decimal total_net_assets = 4;
+  // Grand totals across every section - total_assets should equal
+  // total_liabilities (which includes Capital & Reserves), the same
+  // double-entry identity the old flat assets/liabilities/equity shape
+  // checked, now summed across sections instead.
+  Decimal total_assets = 5;
+  Decimal total_liabilities = 6;
+}
+
+message GetIncomeStatementRequest {
+  int64 business_id = 1;
+  google.type.Date period_start = 2;
+  google.type.Date period_end = 3;
+}
+
+message GetIncomeStatementResponse {
+  IncomeStatement income_statement = 1;
+}
+
+message IncomeStatementLine {
+  int32 account_id = 1;
+  string account_code = 2;
+  string account_name = 3;
+  Decimal amount = 4;
+}
+
+// Standard US multi-step income statement shape: Revenue - Cost of Goods Sold = Gross Profit;
+// Gross Profit - Operating Expenses = Net Income. cost_of_goods_sold/operating_expenses are
+// split via ledger_account.income_statement_category_id - only EXPENSES-type accounts ever
+// populate either list.
+message IncomeStatement {
+  repeated IncomeStatementLine revenue = 1;
+  Decimal total_revenue = 2;
+  repeated IncomeStatementLine cost_of_goods_sold = 3;
+  Decimal total_cost_of_goods_sold = 4;
+  Decimal gross_profit = 5;
+  repeated IncomeStatementLine operating_expenses = 6;
+  Decimal total_operating_expenses = 7;
+  Decimal total_expenses = 8;
+  Decimal net_income = 9;
+}
+
+message GetGeneralLedgerRequest {
+  int64 business_id = 1;
+  int32 account_id = 2;
+  google.type.Date period_start = 3;
+  google.type.Date period_end = 4;
+}
+
+message GetGeneralLedgerResponse {
+  GeneralLedger general_ledger = 1;
+}
+
+message GeneralLedgerLine {
+  int64 ledger_transaction_id = 1;
+  google.type.Date transaction_date = 2;
+  optional string description = 3;
+  Decimal debit = 4;
+  Decimal credit = 5;
+  Decimal running_balance = 6;
+}
+
+message GeneralLedger {
+  int32 account_id = 1;
+  string account_code = 2;
+  string account_name = 3;
+  repeated GeneralLedgerLine lines = 4;
+  Decimal ending_balance = 5;
+}
+
+message GetCustomerStatementRequest {
+  int64 contact_id = 1;
+  google.type.Date period_start = 2;
+  google.type.Date period_end = 3;
+}
+
+message GetCustomerStatementResponse {
+  CustomerStatement statement = 1;
+}
+
+message StatementInvoiceLine {
+  int64 invoice_id = 1;
+  string invoice_number = 2;
+  google.type.Date invoice_date = 3;
+  google.type.Date due_date = 4;
+  Decimal total_amount = 5;
+  Decimal balance_due = 6;
+  string status = 7;
+}
+
+message StatementPaymentLine {
+  int64 payment_id = 1;
+  string payment_number = 2;
+  google.type.Date payment_date = 3;
+  Decimal amount = 4;
+}
+
+// Debit increases the balance owed (an invoice); credit decreases it (a
+// payment) — the same convention as the contact's own AR sub-ledger.
+message StatementActivityLine {
+  google.type.Date date = 1;
+  string description = 2;
+  Decimal debit = 3;
+  Decimal credit = 4;
+  Decimal running_balance = 5;
+}
+
+message AgingBucket {
+  string label = 1;
+  Decimal amount = 2;
+}
+
+// aging_buckets is a snapshot as of period_end over every still-open
+// invoice through that date — independent of period_start, since AR aging
+// is conventionally point-in-time, not scoped to an activity window.
+message CustomerStatement {
+  int64 contact_id = 1;
+  string contact_name = 2;
+  google.type.Date period_start = 3;
+  google.type.Date period_end = 4;
+  repeated StatementInvoiceLine invoices = 5;
+  repeated StatementPaymentLine payments = 6;
+  repeated StatementActivityLine activity = 7;
+  Decimal ending_balance = 8;
+  repeated AgingBucket aging_buckets = 9;
+}
+
+message GetTrialBalancePdfRequest {
+  int64 business_id = 1;
+  google.type.Date as_of = 2;
+}
+
+message GetTrialBalancePdfResponse {
+  bytes content = 1;
+}
+
+message GetBalanceSheetPdfRequest {
+  int64 business_id = 1;
+  google.type.Date as_of = 2;
+}
+
+message GetBalanceSheetPdfResponse {
+  bytes content = 1;
+}
+
+message GetIncomeStatementPdfRequest {
+  int64 business_id = 1;
+  google.type.Date period_start = 2;
+  google.type.Date period_end = 3;
+}
+
+message GetIncomeStatementPdfResponse {
+  bytes content = 1;
+}
+
+message GetGeneralLedgerPdfRequest {
+  int64 business_id = 1;
+  int32 account_id = 2;
+  google.type.Date period_start = 3;
+  google.type.Date period_end = 4;
+}
+
+message GetGeneralLedgerPdfResponse {
+  bytes content = 1;
+}
+
+message GetCustomerStatementPdfRequest {
+  int64 contact_id = 1;
+  google.type.Date period_start = 2;
+  google.type.Date period_end = 3;
+}
+
+message GetCustomerStatementPdfResponse {
+  bytes content = 1;
+}

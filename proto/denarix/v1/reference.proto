@@ -1,0 +1,54 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// ReferenceDataService exposes the seeded lookup tables that ledger
+// accounts reference by id. These rows are global (not business-scoped)
+// and effectively static: identified by row, so a client may cache the
+// response for the lifetime of a session.
+service ReferenceDataService {
+  rpc ListLedgerReferenceData(ListLedgerReferenceDataRequest) returns (ListLedgerReferenceDataResponse);
+}
+
+message LedgerAccountType {
+  int32 id = 1;
+  // ASSETS, LIABILITIES, EQUITY, REVENUE, EXPENSES, TAX_LIABILITY.
+  string name = 2;
+  string description = 3;
+  // DEBIT or CREDIT.
+  string normal_balance = 4;
+}
+
+message CashFlowCategory {
+  int32 id = 1;
+  string name = 2;
+  int32 display_sequence = 3;
+}
+
+message BalanceSheetCategory {
+  int32 id = 1;
+  string name = 2;
+  int32 display_sequence = 3;
+}
+
+message IncomeStatementCategory {
+  int32 id = 1;
+  string name = 2;
+  int32 display_sequence = 3;
+}
+
+message ListLedgerReferenceDataRequest {}
+
+message ListLedgerReferenceDataResponse {
+  // Each list is ordered by display_sequence where the table has one,
+  // by id otherwise.
+  repeated LedgerAccountType account_types = 1;
+  repeated CashFlowCategory cash_flow_categories = 2;
+  repeated BalanceSheetCategory balance_sheet_categories = 3;
+  repeated IncomeStatementCategory income_statement_categories = 4;
+}

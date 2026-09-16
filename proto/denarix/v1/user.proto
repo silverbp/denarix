@@ -1,0 +1,45 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// UserService: app_user-level operations that aren't scoped to a single
+// business. SetGlobalAdmin is deliberately global-admin-only (see
+// auth.RequireGlobalAdmin) - the very first global admin has no existing
+// admin to grant it, so it's bootstrapped from DENARIX_BOOTSTRAP_ADMIN_EMAIL at
+// server startup instead (internal/auth/bootstrap.go); every subsequent
+// one is promoted via this RPC.
+service UserService {
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+  rpc SetGlobalAdmin(SetGlobalAdminRequest) returns (SetGlobalAdminResponse);
+}
+
+message AppUser {
+  int64 id = 1;
+  string email = 2;
+  optional string display_name = 3;
+  bool is_global_admin = 4;
+  bool is_active = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message GetMeRequest {}
+
+message GetMeResponse {
+  AppUser user = 1;
+}
+
+message SetGlobalAdminRequest {
+  int64 user_id = 1;
+  bool is_global_admin = 2;
+}
+
+message SetGlobalAdminResponse {
+  AppUser user = 1;
+}

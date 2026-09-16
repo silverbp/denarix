@@ -1,0 +1,15 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// Decimal represents an exact decimal value the way it round-trips through a
+// Postgres NUMERIC column (money at scale 2, quantities at scale 4, rates at
+// scale 4) without float precision loss, e.g. "1234.56", "-0.0425".
+message Decimal {
+  string value = 1;
+}

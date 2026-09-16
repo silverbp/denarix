@@ -1,0 +1,215 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "denarix/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+import "google/type/date.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+// LedgerAccountService manages the chart of accounts. is_system accounts
+// (Income Summary, Retained Earnings, ...) are provisioned internally by
+// period close, not through CreateLedgerAccount.
+service LedgerAccountService {
+  rpc GetLedgerAccount(GetLedgerAccountRequest) returns (GetLedgerAccountResponse);
+  rpc ListLedgerAccounts(ListLedgerAccountsRequest) returns (ListLedgerAccountsResponse);
+  rpc CreateLedgerAccount(CreateLedgerAccountRequest) returns (CreateLedgerAccountResponse);
+  rpc UpdateLedgerAccount(UpdateLedgerAccountRequest) returns (UpdateLedgerAccountResponse);
+  rpc DeactivateLedgerAccount(DeactivateLedgerAccountRequest) returns (DeactivateLedgerAccountResponse);
+}
+
+// LedgerTransactionService posts and reads the double-entry ledger.
+// CreateLedgerTransaction is the one composite write in this domain: a
+// transaction and all of its entries are created together, atomically, so
+// the API can never produce an unbalanced or partially-posted transaction.
+service LedgerTransactionService {
+  rpc GetLedgerTransaction(GetLedgerTransactionRequest) returns (GetLedgerTransactionResponse);
+  rpc ListLedgerTransactions(ListLedgerTransactionsRequest) returns (ListLedgerTransactionsResponse);
+  rpc CreateLedgerTransaction(CreateLedgerTransactionRequest) returns (CreateLedgerTransactionResponse);
+  // ReverseLedgerTransaction posts a new transaction mirroring an existing
+  // one with every entry's debit/credit swapped - the guided correction for
+  // a transaction posted in error, since there is no void/edit. The
+  // original transaction and its entries are never touched. Rejected with
+  // FAILED_PRECONDITION when the transaction is linked from an invoice or
+  // payment (correct those through `invoice cancel` / `payment void`
+  // instead, which keep paid_amount/balance_due/payment_application in
+  // sync), when it has already been reversed, when it is itself a reversal,
+  // or when the reversal's date falls in a closed period.
+  rpc ReverseLedgerTransaction(ReverseLedgerTransactionRequest) returns (ReverseLedgerTransactionResponse);
+}
+
+message LedgerAccount {
+  int32 id = 1;
+  int64 business_id = 2;
+  int32 account_type_id = 3;
+  optional int32 parent_account_id = 4;
+  string code = 5;
+  string name = 6;
+  optional string description = 7;
+  bool is_system = 8;
+  bool is_reconcilable = 9;
+  bool is_container = 10;
+  optional int32 cash_flow_category_id = 11;
+  bool is_active = 13;
+  optional int64 created_by_user_id = 14;
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp updated_at = 16;
+  optional int32 balance_sheet_category_id = 17;
+  optional int32 income_statement_category_id = 19;
+  // See Business.resource_version.
+  int64 resource_version = 20;
+}
+
+message GetLedgerAccountRequest {
+  int32 id = 1;
+}
+
+message GetLedgerAccountResponse {
+  LedgerAccount account = 1;
+}
+
+message ListLedgerAccountsRequest {
+  int64 business_id = 1;
+}
+
+message ListLedgerAccountsResponse {
+  repeated LedgerAccount accounts = 1;
+}
+
+message CreateLedgerAccountRequest {
+  int64 business_id = 1;
+  int32 account_type_id = 2;
+  optional int32 parent_account_id = 3;
+  string code = 4;
+  string name = 5;
+  optional string description = 6;
+  bool is_reconcilable = 7;
+  bool is_container = 8;
+  optional int32 cash_flow_category_id = 9;
+  optional int32 balance_sheet_category_id = 10;
+  optional int32 income_statement_category_id = 12;
+}
+
+message CreateLedgerAccountResponse {
+  LedgerAccount account = 1;
+}
+
+message UpdateLedgerAccountRequest {
+  int32 id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional bool is_reconcilable = 4;
+  optional bool is_container = 5;
+  optional int32 cash_flow_category_id = 6;
+  optional int32 balance_sheet_category_id = 7;
+  optional int32 income_statement_category_id = 9;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 10;
+}
+
+message UpdateLedgerAccountResponse {
+  LedgerAccount account = 1;
+}
+
+message DeactivateLedgerAccountRequest {
+  int32 id = 1;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 2;
+}
+
+message DeactivateLedgerAccountResponse {
+  LedgerAccount account = 1;
+}
+
+message LedgerEntry {
+  int64 id = 1;
+  int64 ledger_transaction_id = 2;
+  int32 account_id = 3;
+  Decimal debit_amount = 4;
+  Decimal credit_amount = 5;
+  optional string description = 6;
+}
+
+message LedgerTransaction {
+  int64 id = 1;
+  int64 business_id = 2;
+  google.type.Date transaction_date = 3;
+  optional string description = 4;
+  optional string reference_number = 5;
+  optional int64 created_by_user_id = 6;
+  google.protobuf.Timestamp created_at = 7;
+  repeated LedgerEntry entries = 8;
+  // Set when this transaction is a reversal: the id of the transaction it
+  // mirrors. At most one reversal exists per transaction.
+  optional int64 reverses_ledger_transaction_id = 9;
+}
+
+message GetLedgerTransactionRequest {
+  int64 id = 1;
+}
+
+message GetLedgerTransactionResponse {
+  LedgerTransaction transaction = 1;
+}
+
+message ListLedgerTransactionsRequest {
+  int64 business_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+  // Optional filters, AND-combined; omit them all to list every transaction.
+  // Only transactions with a live entry against this account (must belong to business_id).
+  optional int32 account_id = 4;
+  // transaction_date >= start_date.
+  optional google.type.Date start_date = 5;
+  // transaction_date <= end_date.
+  optional google.type.Date end_date = 6;
+  // Case-insensitive substring of the transaction's description (not entry descriptions).
+  optional string description_contains = 7;
+}
+
+message ListLedgerTransactionsResponse {
+  repeated LedgerTransaction transactions = 1;
+  string next_page_token = 2;
+}
+
+// NewLedgerEntry omits id/ledger_transaction_id, which only exist once the
+// transaction is posted.
+message NewLedgerEntry {
+  int32 account_id = 1;
+  Decimal debit_amount = 2;
+  Decimal credit_amount = 3;
+  optional string description = 4;
+}
+
+message CreateLedgerTransactionRequest {
+  int64 business_id = 1;
+  google.type.Date transaction_date = 2;
+  optional string description = 3;
+  optional string reference_number = 4;
+  repeated NewLedgerEntry entries = 5;
+}
+
+message CreateLedgerTransactionResponse {
+  LedgerTransaction transaction = 1;
+}
+
+message ReverseLedgerTransactionRequest {
+  int64 id = 1;
+  // Date to post the reversal on. Defaults to the original's transaction_date;
+  // set it to a date in the open period when the original falls in a closed
+  // one. Must not be earlier than the original's date.
+  optional google.type.Date reversal_date = 2;
+}
+
+message ReverseLedgerTransactionResponse {
+  // The new, reversing transaction - not the original, which is unchanged.
+  LedgerTransaction transaction = 1;
+}

@@ -1,0 +1,165 @@
+// Copyright (c) 2025 Silver Blueprints LLC
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package denarix.v1;
+
+import "denarix/v1/common.proto";
+import "denarix/v1/ledger.proto";
+import "google/protobuf/timestamp.proto";
+import "google/type/date.proto";
+
+option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
+
+service BankStatementService {
+  rpc GetBankStatement(GetBankStatementRequest) returns (GetBankStatementResponse);
+  rpc ListBankStatements(ListBankStatementsRequest) returns (ListBankStatementsResponse);
+  // CreateBankStatement rejects an opening_balance that doesn't match the
+  // prior statement's closing_balance for the same ledger account, unless
+  // allow_opening_mismatch is set (the first statement on an account, or a
+  // deliberate mid-history import, have no prior statement to chain from).
+  rpc CreateBankStatement(CreateBankStatementRequest) returns (CreateBankStatementResponse);
+  // UpdateBankStatement fixes a statement's own fields (e.g. a copy/paste
+  // error in opening/closing balance) - only passed fields change. The same
+  // chaining check as CreateBankStatement applies when opening_balance or
+  // statement_date changes.
+  rpc UpdateBankStatement(UpdateBankStatementRequest) returns (UpdateBankStatementResponse);
+  // DeactivateBankStatement soft-deletes a statement. Rejected with
+  // FAILED_PRECONDITION while it still has reconciled lines - unreconcile
+  // them first, so a deactivated statement can never hide reconciled
+  // transactions from ListUnreconciledLedgerTransactions.
+  rpc DeactivateBankStatement(DeactivateBankStatementRequest) returns (DeactivateBankStatementResponse);
+  // ReconcileLedgerTransactions links ledger_transaction_ids to a bank
+  // statement, one bank_statement_line each — each transaction must already
+  // post to the statement's own ledger_account_id (see docs/schema.md).
+  rpc ReconcileLedgerTransactions(ReconcileLedgerTransactionsRequest) returns (ReconcileLedgerTransactionsResponse);
+  // UnreconcileLedgerTransactions unlinks previously-reconciled transactions
+  // from a statement (a wrong `reconcile` call, or undoing before a
+  // `deactivate`). The bank_statement_line rows are removed outright, not
+  // soft-deleted, so the same transaction can be reconciled again.
+  rpc UnreconcileLedgerTransactions(UnreconcileLedgerTransactionsRequest) returns (UnreconcileLedgerTransactionsResponse);
+  // ListUnreconciledLedgerTransactions lists candidates for reconciliation:
+  // transactions posting to account_id, through through_date, not yet
+  // linked to any bank_statement for that account.
+  rpc ListUnreconciledLedgerTransactions(ListUnreconciledLedgerTransactionsRequest) returns (ListUnreconciledLedgerTransactionsResponse);
+}
+
+message BankStatementLine {
+  int64 id = 1;
+  int64 bank_statement_id = 2;
+  int64 ledger_transaction_id = 3;
+  int32 display_sequence = 4;
+}
+
+message BankStatement {
+  int64 id = 1;
+  int64 business_id = 2;
+  int32 ledger_account_id = 3;
+  string statement_name = 4;
+  google.type.Date statement_date = 5;
+  Decimal opening_balance = 6;
+  Decimal closing_balance = 7;
+  // reconciled_balance = opening_balance + net activity of every
+  // reconciled transaction, in the account's own normal-balance direction
+  // — compare against closing_balance to see if reconciliation is
+  // complete.
+  Decimal reconciled_balance = 8;
+  repeated BankStatementLine lines = 9;
+  optional int64 created_by_user_id = 10;
+  google.protobuf.Timestamp created_at = 11;
+  // difference = closing_balance - reconciled_balance; zero once every line
+  // on the real bank statement has been reconciled. Unset when
+  // closing_balance itself is unset.
+  Decimal difference = 12;
+  // See Business.resource_version.
+  int64 resource_version = 13;
+}
+
+message GetBankStatementRequest {
+  int64 id = 1;
+}
+
+message GetBankStatementResponse {
+  BankStatement bank_statement = 1;
+}
+
+message ListBankStatementsRequest {
+  int64 business_id = 1;
+}
+
+message ListBankStatementsResponse {
+  repeated BankStatement bank_statements = 1;
+}
+
+message CreateBankStatementRequest {
+  int64 business_id = 1;
+  int32 ledger_account_id = 2;
+  string statement_name = 3;
+  google.type.Date statement_date = 4;
+  Decimal opening_balance = 5;
+  Decimal closing_balance = 6;
+  // Skip the opening-balance-must-match-prior-closing chaining check - for
+  // the first statement on an account, or a deliberate mid-history import.
+  bool allow_opening_mismatch = 7;
+}
+
+message CreateBankStatementResponse {
+  BankStatement bank_statement = 1;
+}
+
+message UpdateBankStatementRequest {
+  int64 id = 1;
+  optional string statement_name = 2;
+  optional google.type.Date statement_date = 3;
+  optional Decimal opening_balance = 4;
+  optional Decimal closing_balance = 5;
+  bool allow_opening_mismatch = 6;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 7;
+}
+
+message UpdateBankStatementResponse {
+  BankStatement bank_statement = 1;
+}
+
+message DeactivateBankStatementRequest {
+  int64 id = 1;
+  // Optimistic-concurrency precondition - see Business.resource_version. Pass the
+  // resource_version from the copy you read to fail with ABORTED if it's since changed;
+  // leave unset (0) to write unconditionally.
+  int64 resource_version = 2;
+}
+
+message DeactivateBankStatementResponse {
+  BankStatement bank_statement = 1;
+}
+
+message ReconcileLedgerTransactionsRequest {
+  int64 bank_statement_id = 1;
+  repeated int64 ledger_transaction_ids = 2;
+}
+
+message ReconcileLedgerTransactionsResponse {
+  BankStatement bank_statement = 1;
+}
+
+message UnreconcileLedgerTransactionsRequest {
+  int64 bank_statement_id = 1;
+  repeated int64 ledger_transaction_ids = 2;
+}
+
+message UnreconcileLedgerTransactionsResponse {
+  BankStatement bank_statement = 1;
+}
+
+message ListUnreconciledLedgerTransactionsRequest {
+  int32 ledger_account_id = 1;
+  google.type.Date through_date = 2;
+}
+
+message ListUnreconciledLedgerTransactionsResponse {
+  repeated LedgerTransaction transactions = 1;
+}

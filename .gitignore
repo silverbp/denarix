@@ -1,0 +1,4 @@
+scripts/.venv/
+scripts/local/
+/bin/
+/.env
