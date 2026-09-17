@@ -123,31 +123,105 @@ func loadCeremonySession(id string) (*gowebauthn.SessionData, bool) {
 }
 
 // --- registration ceremony ---
+//
+// Registration is always driven by a token, never by a free-typed email.
+// A brand-new account is created from a business_invite (which carries the
+// invited email); an additional/replacement passkey for an EXISTING
+// account is authorized by a credential_enrollment token (see
+// UserService.ResetUserCredentials and bootstrap.go). This is what closes
+// account takeover: there is no way to say "enroll a passkey for email X";
+// you redeem a secret token, and the token decides whose account it binds
+// to. Knowing someone's email is never sufficient.
 
-// BeginRegistration starts a passkey registration for a user identified by
-// email. Registering a new account (no existing app_user for that email)
-// requires a valid, unexpired, unrevoked business_invite addressed to that
-// exact email — passkey registration is how a new Denarix user signs up, but
-// nobody can create an account out of thin air; someone (a global admin or
-// a business's own OWNER/ADMIN) has to have invited that email first, via
-// BusinessService.CreateBusinessInvite. An existing account registering an
-// additional device's passkey needs no token.
-func BeginRegistration(ctx context.Context, q *sqlcgen.Queries, w *gowebauthn.WebAuthn, email, displayName, inviteToken string) (*protocol.CredentialCreation, string, error) {
-	appUser, err := q.GetAppUserByEmail(ctx, email)
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", err
-		}
-		if _, err := pendingInviteForEmail(ctx, q, inviteToken, email); err != nil {
-			return nil, "", err
-		}
-		appUser, err = q.CreateAppUser(ctx, sqlcgen.CreateAppUserParams{Email: email, DisplayName: &displayName})
-		if err != nil {
-			return nil, "", err
-		}
+type registrationKind int
+
+const (
+	regNewAccount registrationKind = iota // business_invite -> create account + grant
+	regEnrollment                         // credential_enrollment -> add/replace a passkey on an existing account
+)
+
+type registrationTarget struct {
+	kind       registrationKind
+	appUser    sqlcgen.AppUser
+	invite     sqlcgen.BusinessInvite      // set when kind == regNewAccount
+	enrollment sqlcgen.CredentialEnrollment // set when kind == regEnrollment
+}
+
+// resolveRegistrationTarget maps a registration token to what it authorizes.
+// createIfNew is true only during BeginRegistration: a brand-new invited
+// account is created here so the ceremony has a stable user handle;
+// FinishRegistration resolves the same token again with createIfNew=false
+// and expects the account to already exist.
+func resolveRegistrationTarget(ctx context.Context, q *sqlcgen.Queries, token string, createIfNew bool) (registrationTarget, error) {
+	if token == "" {
+		return registrationTarget{}, fmt.Errorf("registration requires an invite or enrollment token")
 	}
 
-	u, err := loadWebAuthnUser(ctx, q, appUser)
+	// An enrollment token (existing account adding/replacing a passkey) takes
+	// precedence — its hash space is disjoint from invites in practice.
+	enroll, err := q.GetPendingCredentialEnrollmentByTokenHash(ctx, HashEnrollmentToken(token))
+	if err == nil {
+		appUser, err := q.GetAppUser(ctx, enroll.UserID)
+		if err != nil {
+			return registrationTarget{}, err
+		}
+		return registrationTarget{kind: regEnrollment, appUser: appUser, enrollment: enroll}, nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return registrationTarget{}, err
+	}
+
+	invite, err := q.GetPendingBusinessInviteByTokenHash(ctx, HashInviteToken(token))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return registrationTarget{}, fmt.Errorf("token is invalid, expired, or already used")
+		}
+		return registrationTarget{}, err
+	}
+
+	appUser, err := q.GetAppUserByEmail(ctx, invite.Email)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return registrationTarget{}, err
+		}
+		if !createIfNew {
+			return registrationTarget{}, fmt.Errorf("registration session is no longer valid; start again")
+		}
+		displayName := invite.Email
+		appUser, err = q.CreateAppUser(ctx, sqlcgen.CreateAppUserParams{Email: invite.Email, DisplayName: &displayName})
+		if err != nil {
+			return registrationTarget{}, err
+		}
+		return registrationTarget{kind: regNewAccount, appUser: appUser, invite: invite}, nil
+	}
+
+	// The account already exists. An invite can only ever create a passkey for
+	// a fresh account; if this account already has one, adding another is a
+	// takeover attempt and is refused. Redeeming the invite's business grant
+	// for an existing user is done, authenticated, via
+	// BusinessService.AcceptBusinessInvite instead.
+	creds, err := q.ListWebAuthnCredentialsForUser(ctx, appUser.ID)
+	if err != nil {
+		return registrationTarget{}, err
+	}
+	if len(creds) > 0 {
+		return registrationTarget{}, fmt.Errorf("an account for %s already exists; sign in with your existing passkey and run `dxctl accept-invite`, or ask an admin to reset your passkey", invite.Email)
+	}
+	// Account exists but has no passkey (an interrupted first registration) —
+	// let it complete.
+	return registrationTarget{kind: regNewAccount, appUser: appUser, invite: invite}, nil
+}
+
+// BeginRegistration starts a passkey registration driven entirely by a
+// token: a business_invite for a brand-new account, or a
+// credential_enrollment token for an existing one. See
+// resolveRegistrationTarget for the rules.
+func BeginRegistration(ctx context.Context, q *sqlcgen.Queries, w *gowebauthn.WebAuthn, token string) (*protocol.CredentialCreation, string, error) {
+	target, err := resolveRegistrationTarget(ctx, q, token, true)
+	if err != nil {
+		return nil, "", err
+	}
+
+	u, err := loadWebAuthnUser(ctx, q, target.appUser)
 	if err != nil {
 		return nil, "", err
 	}
@@ -163,47 +237,28 @@ func BeginRegistration(ctx context.Context, q *sqlcgen.Queries, w *gowebauthn.We
 	return creation, sessionID, nil
 }
 
-// pendingInviteForEmail resolves inviteToken to a still-pending
-// business_invite addressed to email, or an error explaining why not —
-// used both to gate a brand-new registration (BeginRegistration) and to
-// actually redeem the invite once the credential is safely persisted
-// (FinishRegistration).
-func pendingInviteForEmail(ctx context.Context, q *sqlcgen.Queries, inviteToken, email string) (sqlcgen.BusinessInvite, error) {
-	if inviteToken == "" {
-		return sqlcgen.BusinessInvite{}, fmt.Errorf("registration requires an invite - ask a global admin or a business owner to invite %s first", email)
-	}
-	invite, err := q.GetPendingBusinessInviteByTokenHash(ctx, HashInviteToken(inviteToken))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return sqlcgen.BusinessInvite{}, fmt.Errorf("invite token is invalid, expired, or already used")
-		}
-		return sqlcgen.BusinessInvite{}, err
-	}
-	if !strings.EqualFold(invite.Email, email) {
-		return sqlcgen.BusinessInvite{}, fmt.Errorf("this invite was sent to a different email address")
-	}
-	return invite, nil
-}
-
 // FinishRegistration completes the ceremony begun by BeginRegistration,
-// persisting the new credential and — for a brand-new account — atomically
-// redeeming the invite that gated BeginRegistration into a real
-// business_user grant, in the same transaction as the credential itself:
-// if redemption fails for any reason (the invite was revoked in the
-// intervening seconds, say), the whole registration rolls back rather than
-// leaving an account that exists but was never actually granted the
-// access it was invited for.
-func FinishRegistration(ctx context.Context, store *db.Store, w *gowebauthn.WebAuthn, email, sessionID, inviteToken string, r *http.Request) (*User, error) {
+// persisting the new credential and, in the same transaction, doing the
+// token's side effect:
+//
+//   - business_invite  -> create the business_user grant and mark the invite
+//     accepted, so an account never exists without the access it was
+//     invited for.
+//   - credential_enrollment -> optionally revoke the account's other
+//     passkeys (the reset case) and consume the token.
+//
+// If any of that fails the whole registration rolls back.
+func FinishRegistration(ctx context.Context, store *db.Store, w *gowebauthn.WebAuthn, token, sessionID string, r *http.Request) (*User, error) {
 	session, ok := loadCeremonySession(sessionID)
 	if !ok {
 		return nil, fmt.Errorf("registration session expired or not found")
 	}
 
-	appUser, err := store.Queries.GetAppUserByEmail(ctx, email)
+	target, err := resolveRegistrationTarget(ctx, store.Queries, token, false)
 	if err != nil {
 		return nil, err
 	}
-	u, err := loadWebAuthnUser(ctx, store.Queries, appUser)
+	u, err := loadWebAuthnUser(ctx, store.Queries, target.appUser)
 	if err != nil {
 		return nil, err
 	}
@@ -228,8 +283,14 @@ func FinishRegistration(ctx context.Context, store *db.Store, w *gowebauthn.WebA
 	}
 
 	err = store.ExecTx(ctx, func(q *sqlcgen.Queries) error {
+		if target.kind == regEnrollment && target.enrollment.RevokeExisting {
+			if err := q.DeleteWebAuthnCredentialsForUser(ctx, target.appUser.ID); err != nil {
+				return err
+			}
+		}
+
 		if _, err := q.CreateWebAuthnCredential(ctx, sqlcgen.CreateWebAuthnCredentialParams{
-			UserID:          appUser.ID,
+			UserID:          target.appUser.ID,
 			CredentialID:    cred.ID,
 			PublicKey:       cred.PublicKey,
 			AttestationType: attestationTypePtr,
@@ -242,30 +303,28 @@ func FinishRegistration(ctx context.Context, store *db.Store, w *gowebauthn.WebA
 			return err
 		}
 
-		if inviteToken == "" {
-			return nil
-		}
-		invite, err := pendingInviteForEmail(ctx, q, inviteToken, email)
-		if err != nil {
+		switch target.kind {
+		case regEnrollment:
+			return q.ConsumeCredentialEnrollment(ctx, target.enrollment.ID)
+		case regNewAccount:
+			if _, err := q.CreateBusinessUser(ctx, sqlcgen.CreateBusinessUserParams{
+				BusinessID: target.invite.BusinessID,
+				UserID:     target.appUser.ID,
+				Role:       target.invite.Role,
+			}); err != nil {
+				return err
+			}
+			_, err := q.AcceptBusinessInvite(ctx, sqlcgen.AcceptBusinessInviteParams{ID: target.invite.ID, AcceptedByUserID: &target.appUser.ID})
 			return err
 		}
-		if _, err := q.CreateBusinessUser(ctx, sqlcgen.CreateBusinessUserParams{
-			BusinessID: invite.BusinessID,
-			UserID:     appUser.ID,
-			Role:       invite.Role,
-		}); err != nil {
-			return err
-		}
-		_, err = q.AcceptBusinessInvite(ctx, sqlcgen.AcceptBusinessInviteParams{ID: invite.ID, AcceptedByUserID: &appUser.ID})
-		return err
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &User{ID: appUser.ID, Email: appUser.Email}, nil
+	return &User{ID: target.appUser.ID, Email: target.appUser.Email}, nil
 }
-
 // --- login ceremony ---
 //
 // Usernameless/discoverable: the browser's own passkey UI picks which

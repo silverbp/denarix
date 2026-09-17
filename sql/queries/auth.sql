@@ -62,6 +62,11 @@ SELECT * FROM webauthn_credential WHERE user_id = $1 ORDER BY id;
 -- name: GetWebAuthnCredentialByCredentialID :one
 SELECT * FROM webauthn_credential WHERE credential_id = $1;
 
+-- name: DeleteWebAuthnCredentialsForUser :exec
+-- Hard-removes every passkey on an account — used when a credential_enrollment token with
+-- revoke_existing is redeemed (a "reset"), so a lost/compromised device can no longer sign in.
+DELETE FROM webauthn_credential WHERE user_id = $1;
+
 -- name: UpdateWebAuthnCredentialAfterLogin :exec
 -- sign_count backs clone-detection; backup_state can legitimately change post-registration
 -- (e.g. a passkey newly synced to iCloud Keychain) and go-webauthn's docs call out that it MUST

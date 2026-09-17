@@ -426,6 +426,8 @@ erDiagram
     app_user ||--o{ business_user : "user_id"
     app_user ||--o{ user_session : "user_id"
     app_user ||--o{ webauthn_credential : "user_id"
+    app_user ||--o{ credential_enrollment : "user_id"
+    app_user |o--o{ credential_enrollment : "created_by_user_id"
     user_session |o--o{ user_session : "replaced_by_session_id"
     business ||--o{ business_invite : "business_id"
     app_user |o--o{ business_invite : "invited_by_user_id"
@@ -475,6 +477,16 @@ erDiagram
         bigint sign_count
         varchar name
     }
+    credential_enrollment {
+        bigint id PK
+        bigint user_id FK
+        varchar token_hash UK
+        boolean revoke_existing
+        varchar purpose "RESET BOOTSTRAP"
+        bigint created_by_user_id FK
+        timestamp expires_at
+        timestamp consumed_at
+    }
 ```
 
 `business` is a stub here — full definition in diagram 1.
@@ -486,7 +498,10 @@ erDiagram
   integration. `email` is the human-facing identifier: used for account
   lookup/display and as the WebAuthn `user.name` during passkey
   registration. The actual credential material lives in
-  `webauthn_credential`, never here.
+  `webauthn_credential`, never here. Registration is always driven by a token
+  (a `business_invite` for a brand-new account, a `credential_enrollment` for
+  an existing one), never by a free-typed email — so knowing someone's email
+  is never enough to enroll a passkey onto their account.
 - **`is_global_admin`** — the one cross-business privilege in the schema:
   only a global admin can create a business (`BusinessService.CreateBusiness`,
   `auth.RequireGlobalAdmin`) or invite/manage users on any business. There
@@ -496,13 +511,25 @@ erDiagram
   `UserService.SetGlobalAdmin` transfers the flag (clear the old holder, set
   the new one, in one transaction) so it never attempts to violate that; the
   very first admin has nobody to grant it, so it's bootstrapped from
-  `DENARIX_BOOTSTRAP_ADMIN_EMAIL` at startup (`internal/auth/bootstrap.go`).
+  `DENARIX_BOOTSTRAP_ADMIN_EMAIL` at startup (`internal/auth/bootstrap.go`),
+  which also mints the admin's first `credential_enrollment` token since they
+  have no inviter to issue one. `DENARIX_BOOTSTRAP_ADMIN_RESET=true` is the
+  break-glass recovery switch for that one account.
 - **`webauthn_credential`** — one row per registered passkey (a user may
   register more than one, e.g. a laptop and a phone). `credential_id`/
   `public_key` are the raw values a WebAuthn relying-party library produces;
   `sign_count` backs its clone-detection check. Cross-device sign-in (scan a
   QR code from your phone) is handled natively by the browser's built-in
   passkey UI — nothing here or in the API implements that transport.
+- **`credential_enrollment`** — a single-use token that authorizes enrolling
+  a passkey onto an **existing** account: the only way to add a credential to
+  an account that already has one. Issued by a global admin or a business
+  OWNER/ADMIN via `UserService.ResetUserCredentials` (`purpose = RESET`, for a
+  lost/replaced device) or minted for the first admin at startup
+  (`purpose = BOOTSTRAP`). `revoke_existing` (default true) deletes the
+  account's other passkeys when the token is redeemed, not when it's issued,
+  so minting one is non-destructive. A partial unique index keeps at most one
+  live token per user. Same `token_hash`-not-raw rule as `business_invite`.
 - **`business_user`** — membership + role join table; a user can belong to
   multiple businesses, a business can have multiple users. `role` is a
   `VARCHAR` + `CHECK`, matching the schema's existing string-enum convention

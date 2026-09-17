@@ -60,11 +60,18 @@ type authHandlers struct {
 // create a brand-new account, so an invite link is
 // "/auth/start?invite_token=<token>".
 func (h *authHandlers) start(w http.ResponseWriter, r *http.Request) {
+	// token drives registration (a business invite for a new account, or a
+	// credential-enrollment/reset token for an existing one). invite_token is
+	// the legacy name for the same query param, still accepted.
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		token = r.URL.Query().Get("invite_token")
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := authStartTemplate.Execute(w, map[string]string{
 		"RedirectURI": r.URL.Query().Get("redirect_uri"),
 		"State":       r.URL.Query().Get("state"),
-		"InviteToken": r.URL.Query().Get("invite_token"),
+		"Token":       token,
 	}); err != nil {
 		slog.Error("rendering auth start page", "error", err)
 	}
@@ -78,24 +85,17 @@ func (h *authHandlers) logo(w http.ResponseWriter, r *http.Request) {
 
 func (h *authHandlers) registerBegin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
-		// InviteToken is required for a brand-new account (no existing
-		// app_user for this email) — see auth.BeginRegistration. Not needed
-		// when registering an additional device's passkey for an account
-		// that already exists.
-		InviteToken string `json:"inviteToken"`
+		// Token is the sole identity input: a business invite (new account)
+		// or a credential-enrollment/reset token (existing account). There is
+		// no free-typed email — the token decides whose account this binds to.
+		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
-		http.Error(w, "email is required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		http.Error(w, "a registration token is required", http.StatusBadRequest)
 		return
 	}
-	displayName := req.DisplayName
-	if displayName == "" {
-		displayName = req.Email
-	}
 
-	creation, sessionID, err := auth.BeginRegistration(r.Context(), h.store.Queries, h.webauthn, req.Email, displayName, req.InviteToken)
+	creation, sessionID, err := auth.BeginRegistration(r.Context(), h.store.Queries, h.webauthn, req.Token)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
@@ -104,14 +104,13 @@ func (h *authHandlers) registerBegin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *authHandlers) registerFinish(w http.ResponseWriter, r *http.Request) {
-	email := r.URL.Query().Get("email")
+	token := r.URL.Query().Get("token")
 	sessionID := r.URL.Query().Get("session_id")
-	inviteToken := r.URL.Query().Get("invite_token")
-	if email == "" || sessionID == "" {
-		http.Error(w, "email and session_id are required", http.StatusBadRequest)
+	if token == "" || sessionID == "" {
+		http.Error(w, "token and session_id are required", http.StatusBadRequest)
 		return
 	}
-	u, err := auth.FinishRegistration(r.Context(), h.store, h.webauthn, email, sessionID, inviteToken, r)
+	u, err := auth.FinishRegistration(r.Context(), h.store, h.webauthn, token, sessionID, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -214,21 +213,21 @@ var authStartTemplate = template.Must(template.New("auth-start").Parse(`<!DOCTYP
 <img class="logo" src="/auth/logo.png" alt="Denarix">
 <h1>Sign in to Denarix</h1>
 <button id="login-btn">Sign in with a passkey</button>
+{{if .Token}}
 <hr>
-{{if .InviteToken}}
-<p>You've been invited. Enter the email the invite was sent to:</p>
+<p>Your invite or reset link is ready. Create a passkey to finish — the account it belongs to is set by your link, so there's nothing to type.</p>
+<button id="register-btn">Create your passkey</button>
 {{else}}
-<p>New here? Denarix is invite-only — ask a global admin or a business owner to invite your email, then open the link they send you.</p>
+<hr>
+<p>New here? Denarix is invite-only — ask a global admin or a business owner to invite your email, then open the link they send you. Lost your device? Ask an admin to reset your passkey.</p>
 {{end}}
-<input id="email" type="email" placeholder="you@example.com" autocomplete="email">
-<button id="register-btn">Create a passkey</button>
 <p id="status"></p>
 <p id="error"></p>
 
 <script>
 const redirectURI = {{.RedirectURI}};
 const state = {{.State}};
-const inviteToken = {{.InviteToken}};
+const token = {{.Token}};
 
 function status(msg) { document.getElementById('status').textContent = msg; }
 function fail(msg) { document.getElementById('error').textContent = msg; }
@@ -256,13 +255,12 @@ function finishWithCode(code) {
 
 async function register() {
   fail(''); status('');
-  const email = document.getElementById('email').value.trim();
-  if (!email) { fail('Enter an email address.'); return; }
+  if (!token) { fail('This page needs an invite or reset link to create a passkey.'); return; }
   try {
     status('Requesting a new passkey challenge...');
     const beginResp = await fetch('/auth/webauthn/register/begin', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({email: email, inviteToken: inviteToken}),
+      body: JSON.stringify({token: token}),
     });
     if (!beginResp.ok) throw new Error(await beginResp.text());
     const {options, session_id} = await beginResp.json();
@@ -291,8 +289,7 @@ async function register() {
 
     status('Finishing registration...');
     const finishResp = await fetch(
-      '/auth/webauthn/register/finish?email=' + encodeURIComponent(email) + '&session_id=' + encodeURIComponent(session_id) +
-        '&invite_token=' + encodeURIComponent(inviteToken || ''),
+      '/auth/webauthn/register/finish?token=' + encodeURIComponent(token) + '&session_id=' + encodeURIComponent(session_id),
       {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(credentialJSON)});
     if (!finishResp.ok) throw new Error(await finishResp.text());
     const {code} = await finishResp.json();
@@ -345,7 +342,8 @@ async function login() {
 }
 
 document.getElementById('login-btn').addEventListener('click', login);
-document.getElementById('register-btn').addEventListener('click', register);
+const registerBtn = document.getElementById('register-btn');
+if (registerBtn) registerBtn.addEventListener('click', register);
 </script>
 </body>
 </html>

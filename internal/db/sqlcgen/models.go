@@ -157,6 +157,18 @@ type Contact struct {
 	DeletedAt            pgtype.Timestamp `json:"deleted_at"`
 }
 
+type CredentialEnrollment struct {
+	ID              int64            `json:"id"`
+	UserID          int64            `json:"user_id"`
+	TokenHash       string           `json:"token_hash"`
+	RevokeExisting  bool             `json:"revoke_existing"`
+	Purpose         string           `json:"purpose"`
+	CreatedByUserID *int64           `json:"created_by_user_id"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	ConsumedAt      pgtype.Timestamp `json:"consumed_at"`
+}
+
 type Customer struct {
 	ID              int64            `json:"id"`
 	ContactID       int64            `json:"contact_id"`

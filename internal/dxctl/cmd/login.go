@@ -25,19 +25,25 @@ import (
 const loginTimeout = 3 * time.Minute
 
 func newLoginCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate via passkey",
 		Long: `Authenticate the current context's server via passkey (WebAuthn): opens
 your browser to complete the ceremony, then stores the resulting session in
 ~/.dxctl/config. Requires a context to already exist — run
-"dxctl config set-context" first.`,
-		Example: "  dxctl login",
+"dxctl config set-context" first.
+
+Redeeming an invite or a passkey-reset link? Pass --token <token>: the same
+browser trip creates your passkey and signs you in.`,
+		Example: "  dxctl login\n  dxctl login --token abc123token",
 		RunE:    runLogin,
 	}
+	cmd.Flags().String("token", "", "invite or passkey-reset token: create a passkey and sign in in one step")
+	return cmd
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
+	enrollToken, _ := cmd.Flags().GetString("token")
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -73,6 +79,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	authURL := fmt.Sprintf("%s/auth/start?redirect_uri=%s&state=%s",
 		httpBaseURL(server, insecureTransport), url.QueryEscape(redirectURI), url.QueryEscape(state))
+	if enrollToken != "" {
+		authURL += "&token=" + url.QueryEscape(enrollToken)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Opening your browser to complete passkey sign-in...\n%s\n", authURL)
 	if err := openBrowser(authURL); err != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "Couldn't open a browser automatically — open the URL above manually.\n")

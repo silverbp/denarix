@@ -22,8 +22,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	UserService_GetMe_FullMethodName          = "/denarix.v1.UserService/GetMe"
-	UserService_SetGlobalAdmin_FullMethodName = "/denarix.v1.UserService/SetGlobalAdmin"
+	UserService_GetMe_FullMethodName                = "/denarix.v1.UserService/GetMe"
+	UserService_SetGlobalAdmin_FullMethodName       = "/denarix.v1.UserService/SetGlobalAdmin"
+	UserService_ResetUserCredentials_FullMethodName = "/denarix.v1.UserService/ResetUserCredentials"
 )
 
 // UserServiceClient is the client API for UserService service.
@@ -39,6 +40,14 @@ const (
 type UserServiceClient interface {
 	GetMe(ctx context.Context, in *GetMeRequest, opts ...grpc.CallOption) (*GetMeResponse, error)
 	SetGlobalAdmin(ctx context.Context, in *SetGlobalAdminRequest, opts ...grpc.CallOption) (*SetGlobalAdminResponse, error)
+	// ResetUserCredentials mints a single-use enrollment token that lets the
+	// target user register a new passkey (see credential_enrollment). By
+	// default it revokes their existing passkeys — the recovery case for a
+	// lost/replaced device. Callable by a global admin (any user) or a
+	// business OWNER/ADMIN over a business the target belongs to. The
+	// resulting token is hand-delivered like a business invite; denarix
+	// never sends it anywhere.
+	ResetUserCredentials(ctx context.Context, in *ResetUserCredentialsRequest, opts ...grpc.CallOption) (*ResetUserCredentialsResponse, error)
 }
 
 type userServiceClient struct {
@@ -69,6 +78,16 @@ func (c *userServiceClient) SetGlobalAdmin(ctx context.Context, in *SetGlobalAdm
 	return out, nil
 }
 
+func (c *userServiceClient) ResetUserCredentials(ctx context.Context, in *ResetUserCredentialsRequest, opts ...grpc.CallOption) (*ResetUserCredentialsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResetUserCredentialsResponse)
+	err := c.cc.Invoke(ctx, UserService_ResetUserCredentials_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserServiceServer is the server API for UserService service.
 // All implementations must embed UnimplementedUserServiceServer
 // for forward compatibility.
@@ -82,6 +101,14 @@ func (c *userServiceClient) SetGlobalAdmin(ctx context.Context, in *SetGlobalAdm
 type UserServiceServer interface {
 	GetMe(context.Context, *GetMeRequest) (*GetMeResponse, error)
 	SetGlobalAdmin(context.Context, *SetGlobalAdminRequest) (*SetGlobalAdminResponse, error)
+	// ResetUserCredentials mints a single-use enrollment token that lets the
+	// target user register a new passkey (see credential_enrollment). By
+	// default it revokes their existing passkeys — the recovery case for a
+	// lost/replaced device. Callable by a global admin (any user) or a
+	// business OWNER/ADMIN over a business the target belongs to. The
+	// resulting token is hand-delivered like a business invite; denarix
+	// never sends it anywhere.
+	ResetUserCredentials(context.Context, *ResetUserCredentialsRequest) (*ResetUserCredentialsResponse, error)
 	mustEmbedUnimplementedUserServiceServer()
 }
 
@@ -97,6 +124,9 @@ func (UnimplementedUserServiceServer) GetMe(context.Context, *GetMeRequest) (*Ge
 }
 func (UnimplementedUserServiceServer) SetGlobalAdmin(context.Context, *SetGlobalAdminRequest) (*SetGlobalAdminResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetGlobalAdmin not implemented")
+}
+func (UnimplementedUserServiceServer) ResetUserCredentials(context.Context, *ResetUserCredentialsRequest) (*ResetUserCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetUserCredentials not implemented")
 }
 func (UnimplementedUserServiceServer) mustEmbedUnimplementedUserServiceServer() {}
 func (UnimplementedUserServiceServer) testEmbeddedByValue()                     {}
@@ -155,6 +185,24 @@ func _UserService_SetGlobalAdmin_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_ResetUserCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetUserCredentialsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).ResetUserCredentials(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_ResetUserCredentials_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).ResetUserCredentials(ctx, req.(*ResetUserCredentialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UserService_ServiceDesc is the grpc.ServiceDesc for UserService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -169,6 +217,10 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetGlobalAdmin",
 			Handler:    _UserService_SetGlobalAdmin_Handler,
+		},
+		{
+			MethodName: "ResetUserCredentials",
+			Handler:    _UserService_ResetUserCredentials_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -285,6 +285,124 @@ func (x *SetGlobalAdminResponse) GetUser() *AppUser {
 	return nil
 }
 
+type ResetUserCredentialsRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	UserId int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// business_id scopes the permission check for a non-global-admin caller:
+	// they must be OWNER/ADMIN of it and the target must be a member. A
+	// global admin may reset any user and this is ignored.
+	BusinessId int64 `protobuf:"varint,2,opt,name=business_id,json=businessId,proto3" json:"business_id,omitempty"`
+	// keep_existing leaves the user's current passkeys in place and just adds
+	// a device. Default (false) revokes them — the "reset" semantics.
+	KeepExisting  bool `protobuf:"varint,3,opt,name=keep_existing,json=keepExisting,proto3" json:"keep_existing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResetUserCredentialsRequest) Reset() {
+	*x = ResetUserCredentialsRequest{}
+	mi := &file_denarix_v1_user_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetUserCredentialsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetUserCredentialsRequest) ProtoMessage() {}
+
+func (x *ResetUserCredentialsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_denarix_v1_user_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResetUserCredentialsRequest.ProtoReflect.Descriptor instead.
+func (*ResetUserCredentialsRequest) Descriptor() ([]byte, []int) {
+	return file_denarix_v1_user_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ResetUserCredentialsRequest) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *ResetUserCredentialsRequest) GetBusinessId() int64 {
+	if x != nil {
+		return x.BusinessId
+	}
+	return 0
+}
+
+func (x *ResetUserCredentialsRequest) GetKeepExisting() bool {
+	if x != nil {
+		return x.KeepExisting
+	}
+	return false
+}
+
+type ResetUserCredentialsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// token is the one-time enrollment token; hand it to the user yourself.
+	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResetUserCredentialsResponse) Reset() {
+	*x = ResetUserCredentialsResponse{}
+	mi := &file_denarix_v1_user_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetUserCredentialsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetUserCredentialsResponse) ProtoMessage() {}
+
+func (x *ResetUserCredentialsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_denarix_v1_user_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResetUserCredentialsResponse.ProtoReflect.Descriptor instead.
+func (*ResetUserCredentialsResponse) Descriptor() ([]byte, []int) {
+	return file_denarix_v1_user_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ResetUserCredentialsResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *ResetUserCredentialsResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 var File_denarix_v1_user_proto protoreflect.FileDescriptor
 
 const file_denarix_v1_user_proto_rawDesc = "" +
@@ -307,10 +425,20 @@ const file_denarix_v1_user_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12&\n" +
 	"\x0fis_global_admin\x18\x02 \x01(\bR\risGlobalAdmin\"A\n" +
 	"\x16SetGlobalAdminResponse\x12'\n" +
-	"\x04user\x18\x01 \x01(\v2\x13.denarix.v1.AppUserR\x04user2\xa4\x01\n" +
+	"\x04user\x18\x01 \x01(\v2\x13.denarix.v1.AppUserR\x04user\"|\n" +
+	"\x1bResetUserCredentialsRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1f\n" +
+	"\vbusiness_id\x18\x02 \x01(\x03R\n" +
+	"businessId\x12#\n" +
+	"\rkeep_existing\x18\x03 \x01(\bR\fkeepExisting\"o\n" +
+	"\x1cResetUserCredentialsResponse\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt2\x8f\x02\n" +
 	"\vUserService\x12<\n" +
 	"\x05GetMe\x12\x18.denarix.v1.GetMeRequest\x1a\x19.denarix.v1.GetMeResponse\x12W\n" +
-	"\x0eSetGlobalAdmin\x12!.denarix.v1.SetGlobalAdminRequest\x1a\".denarix.v1.SetGlobalAdminResponseB6Z4github.com/silverbp/denarix/gen/denarix/v1;denarixv1b\x06proto3"
+	"\x0eSetGlobalAdmin\x12!.denarix.v1.SetGlobalAdminRequest\x1a\".denarix.v1.SetGlobalAdminResponse\x12i\n" +
+	"\x14ResetUserCredentials\x12'.denarix.v1.ResetUserCredentialsRequest\x1a(.denarix.v1.ResetUserCredentialsResponseB6Z4github.com/silverbp/denarix/gen/denarix/v1;denarixv1b\x06proto3"
 
 var (
 	file_denarix_v1_user_proto_rawDescOnce sync.Once
@@ -324,28 +452,33 @@ func file_denarix_v1_user_proto_rawDescGZIP() []byte {
 	return file_denarix_v1_user_proto_rawDescData
 }
 
-var file_denarix_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_denarix_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_denarix_v1_user_proto_goTypes = []any{
-	(*AppUser)(nil),                // 0: denarix.v1.AppUser
-	(*GetMeRequest)(nil),           // 1: denarix.v1.GetMeRequest
-	(*GetMeResponse)(nil),          // 2: denarix.v1.GetMeResponse
-	(*SetGlobalAdminRequest)(nil),  // 3: denarix.v1.SetGlobalAdminRequest
-	(*SetGlobalAdminResponse)(nil), // 4: denarix.v1.SetGlobalAdminResponse
-	(*timestamppb.Timestamp)(nil),  // 5: google.protobuf.Timestamp
+	(*AppUser)(nil),                      // 0: denarix.v1.AppUser
+	(*GetMeRequest)(nil),                 // 1: denarix.v1.GetMeRequest
+	(*GetMeResponse)(nil),                // 2: denarix.v1.GetMeResponse
+	(*SetGlobalAdminRequest)(nil),        // 3: denarix.v1.SetGlobalAdminRequest
+	(*SetGlobalAdminResponse)(nil),       // 4: denarix.v1.SetGlobalAdminResponse
+	(*ResetUserCredentialsRequest)(nil),  // 5: denarix.v1.ResetUserCredentialsRequest
+	(*ResetUserCredentialsResponse)(nil), // 6: denarix.v1.ResetUserCredentialsResponse
+	(*timestamppb.Timestamp)(nil),        // 7: google.protobuf.Timestamp
 }
 var file_denarix_v1_user_proto_depIdxs = []int32{
-	5, // 0: denarix.v1.AppUser.created_at:type_name -> google.protobuf.Timestamp
+	7, // 0: denarix.v1.AppUser.created_at:type_name -> google.protobuf.Timestamp
 	0, // 1: denarix.v1.GetMeResponse.user:type_name -> denarix.v1.AppUser
 	0, // 2: denarix.v1.SetGlobalAdminResponse.user:type_name -> denarix.v1.AppUser
-	1, // 3: denarix.v1.UserService.GetMe:input_type -> denarix.v1.GetMeRequest
-	3, // 4: denarix.v1.UserService.SetGlobalAdmin:input_type -> denarix.v1.SetGlobalAdminRequest
-	2, // 5: denarix.v1.UserService.GetMe:output_type -> denarix.v1.GetMeResponse
-	4, // 6: denarix.v1.UserService.SetGlobalAdmin:output_type -> denarix.v1.SetGlobalAdminResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	7, // 3: denarix.v1.ResetUserCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
+	1, // 4: denarix.v1.UserService.GetMe:input_type -> denarix.v1.GetMeRequest
+	3, // 5: denarix.v1.UserService.SetGlobalAdmin:input_type -> denarix.v1.SetGlobalAdminRequest
+	5, // 6: denarix.v1.UserService.ResetUserCredentials:input_type -> denarix.v1.ResetUserCredentialsRequest
+	2, // 7: denarix.v1.UserService.GetMe:output_type -> denarix.v1.GetMeResponse
+	4, // 8: denarix.v1.UserService.SetGlobalAdmin:output_type -> denarix.v1.SetGlobalAdminResponse
+	6, // 9: denarix.v1.UserService.ResetUserCredentials:output_type -> denarix.v1.ResetUserCredentialsResponse
+	7, // [7:10] is the sub-list for method output_type
+	4, // [4:7] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_denarix_v1_user_proto_init() }
@@ -360,7 +493,7 @@ func file_denarix_v1_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_denarix_v1_user_proto_rawDesc), len(file_denarix_v1_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

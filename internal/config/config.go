@@ -36,6 +36,13 @@ type Config struct {
 	// UserService.SetGlobalAdmin sticks even if this stays set. Optional —
 	// leave unset once a real admin exists.
 	BootstrapAdminEmail string
+	// BootstrapAdminReset, when true alongside BootstrapAdminEmail, is the
+	// break-glass recovery switch for the one account nobody else can reset:
+	// it mints a fresh enrollment token that revokes the admin's existing
+	// passkeys on redemption (see auth.EnsureBootstrapAdmin). Deliberately
+	// separate from BootstrapAdminEmail so the steady state (email set, no
+	// reset) is a safe no-op. Unset it again after recovering.
+	BootstrapAdminReset bool
 	// StorageEndpoint is the object-storage backend's S3-compatible API
 	// address (host:port, no scheme) - SeaweedFS locally, see
 	// docker-compose.yml's seaweedfs service and internal/storage.
@@ -63,6 +70,7 @@ func Load() (Config, error) {
 		JWTSecret:     getEnv("DENARIX_JWT_SECRET", ""),
 
 		BootstrapAdminEmail: getEnv("DENARIX_BOOTSTRAP_ADMIN_EMAIL", ""),
+		BootstrapAdminReset: getEnv("DENARIX_BOOTSTRAP_ADMIN_RESET", "false") == "true",
 
 		StorageEndpoint:  getEnv("DENARIX_STORAGE_ENDPOINT", "localhost:8333"),
 		StorageAccessKey: getEnv("DENARIX_STORAGE_ACCESS_KEY", "seaweedfs"),

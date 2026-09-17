@@ -17,8 +17,8 @@ Edit `.env`:
 - `DENARIX_JWT_SECRET` - required, the server won't start without it. Generate one with
   `openssl rand -base64 32`.
 - `DENARIX_BOOTSTRAP_ADMIN_EMAIL` - set this to the email you'll sign in with. On first boot (only
-  while no global admin exists yet) denarix grants that email global-admin, which is what lets you
-  create the first business.
+  while no global admin exists yet) denarix grants that email global-admin and mints a one-time
+  passkey-enrollment token, printed to the server log - you use it to register your first passkey.
 
 Leave `DENARIX_PUBLIC_BASE_URL` / `DENARIX_RP_ID` at their `localhost` defaults unless you're exposing this
 beyond your own machine.
@@ -47,15 +47,21 @@ make install     # builds with version info stamped in, installs to $GOBIN
 
 A context needs a business id up front, so point it at a placeholder (`0`) until one exists:
 
+Grab the one-time enrollment token from the server log (the `docker compose logs` above): look for
+`passkey enrollment token minted for the global admin`, which carries a ready-to-run
+`dxctl login --token <token>`. Registration is always token-driven now - there's no email field to
+type, the token decides which account the passkey binds to.
+
 ```sh
 dxctl config set-context dev --server localhost:9090 --insecure --business 0
 dxctl config use-context dev
-dxctl login      # opens your browser to localhost:9091/auth/start
+dxctl login --token <token-from-the-server-log>   # opens your browser, creates your passkey, signs you in
 ```
 
-Click **Create a passkey** and register with the same email as `DENARIX_BOOTSTRAP_ADMIN_EMAIL` - since
-that email was pre-seeded as an admin, no invite token is needed for this first account (any
-account after this one does need an invite: `dxctl business invite create`).
+Click **Create your passkey** in the page that opens. That first passkey is now yours; later sign-ins
+are just `dxctl login`. Every account after this one comes from an invite
+(`dxctl business invite create`), and a user who loses their device is recovered with
+`dxctl user reset-passkey`.
 
 ```sh
 dxctl whoami

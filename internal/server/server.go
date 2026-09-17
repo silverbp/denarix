@@ -47,13 +47,23 @@ func New(ctx context.Context, cfg config.Config) (*Server, error) {
 	}
 
 	if cfg.BootstrapAdminEmail != "" {
-		admin, err := auth.EnsureBootstrapAdmin(ctx, store, cfg.BootstrapAdminEmail)
+		res, err := auth.EnsureBootstrapAdmin(ctx, store, cfg.BootstrapAdminEmail, cfg.BootstrapAdminReset)
 		if err != nil {
 			store.Close()
 			return nil, fmt.Errorf("bootstrapping global admin: %w", err)
 		}
-		if admin != nil {
-			slog.Info("bootstrapped global admin", "user_id", admin.ID, "email", admin.Email)
+		if res != nil && res.User != nil {
+			slog.Info("bootstrapped global admin", "user_id", res.User.ID, "email", res.User.Email, "reset", res.Reset)
+		}
+		if res != nil && res.EnrollmentToken != "" {
+			slog.Warn("passkey enrollment token minted for the global admin - shown once, redeem it now",
+				"email", cfg.BootstrapAdminEmail,
+				"revokes_existing_passkeys", res.Reset,
+				"redeem", fmt.Sprintf("dxctl login --token %s", res.EnrollmentToken),
+				"or_open", fmt.Sprintf("%s/auth/start?token=%s", cfg.PublicBaseURL, res.EnrollmentToken))
+			if cfg.BootstrapAdminReset {
+				slog.Warn("DENARIX_BOOTSTRAP_ADMIN_RESET is set - unset it and restart once you have re-enrolled, or the next start will mint another reset token")
+			}
 		}
 	}
 

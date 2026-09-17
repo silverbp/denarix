@@ -72,7 +72,7 @@ func NewRootCmd() *cobra.Command {
 	)
 	addGrouped(root, groupAccount,
 		newLoginCmd(), newWhoamiCmd(), newAcceptInviteCmd(),
-		newConfigCmd(), newAdminCmd(),
+		newConfigCmd(), newAdminCmd(), newUserCmd(),
 	)
 	addGrouped(root, groupCLI,
 		newCommandsCmd(), newVersionCmd(),

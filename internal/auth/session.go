@@ -105,3 +105,8 @@ func hashToken(token string) string {
 // callers outside this package (business_service.go's invite RPCs).
 func NewInviteToken() (string, error)     { return randomToken() }
 func HashInviteToken(token string) string { return hashToken(token) }
+
+// NewEnrollmentToken/HashEnrollmentToken back credential_enrollment.token_hash — the same
+// random-token/sha256 pattern, for the passkey reset/add-device and bootstrap flows.
+func NewEnrollmentToken() (string, error)     { return randomToken() }
+func HashEnrollmentToken(token string) string { return hashToken(token) }

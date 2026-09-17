@@ -165,6 +165,17 @@ func (q *Queries) CreateWebAuthnCredential(ctx context.Context, arg CreateWebAut
 	return i, err
 }
 
+const deleteWebAuthnCredentialsForUser = `-- name: DeleteWebAuthnCredentialsForUser :exec
+DELETE FROM webauthn_credential WHERE user_id = $1
+`
+
+// Hard-removes every passkey on an account — used when a credential_enrollment token with
+// revoke_existing is redeemed (a "reset"), so a lost/compromised device can no longer sign in.
+func (q *Queries) DeleteWebAuthnCredentialsForUser(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteWebAuthnCredentialsForUser, userID)
+	return err
+}
+
 const getAppUser = `-- name: GetAppUser :one
 
 SELECT id, email, display_name, is_global_admin, is_active, created_at, updated_at, deleted_at FROM app_user WHERE id = $1 AND deleted_at IS NULL

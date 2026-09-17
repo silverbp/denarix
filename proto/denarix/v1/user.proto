@@ -18,6 +18,14 @@ option go_package = "github.com/silverbp/denarix/gen/denarix/v1;denarixv1";
 service UserService {
   rpc GetMe(GetMeRequest) returns (GetMeResponse);
   rpc SetGlobalAdmin(SetGlobalAdminRequest) returns (SetGlobalAdminResponse);
+  // ResetUserCredentials mints a single-use enrollment token that lets the
+  // target user register a new passkey (see credential_enrollment). By
+  // default it revokes their existing passkeys — the recovery case for a
+  // lost/replaced device. Callable by a global admin (any user) or a
+  // business OWNER/ADMIN over a business the target belongs to. The
+  // resulting token is hand-delivered like a business invite; denarix
+  // never sends it anywhere.
+  rpc ResetUserCredentials(ResetUserCredentialsRequest) returns (ResetUserCredentialsResponse);
 }
 
 message AppUser {
@@ -42,4 +50,21 @@ message SetGlobalAdminRequest {
 
 message SetGlobalAdminResponse {
   AppUser user = 1;
+}
+
+message ResetUserCredentialsRequest {
+  int64 user_id = 1;
+  // business_id scopes the permission check for a non-global-admin caller:
+  // they must be OWNER/ADMIN of it and the target must be a member. A
+  // global admin may reset any user and this is ignored.
+  int64 business_id = 2;
+  // keep_existing leaves the user's current passkeys in place and just adds
+  // a device. Default (false) revokes them — the "reset" semantics.
+  bool keep_existing = 3;
+}
+
+message ResetUserCredentialsResponse {
+  // token is the one-time enrollment token; hand it to the user yourself.
+  string token = 1;
+  google.protobuf.Timestamp expires_at = 2;
 }
