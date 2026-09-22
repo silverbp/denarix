@@ -231,6 +231,111 @@ func (d *Document) SetSectionTitle(text string) {
 	d.pdf.CellFormat(contentW, 6, d.tr(text), "", 1, "L", false, 0, "")
 }
 
+// reportRuleGray and reportBarGray are the two shades the single-column
+// report layout (RenderBalanceSheet, RenderIncomeStatement) uses in place
+// of a bordered grid: a light rule bracketing a subtotal row, and a darker
+// fill for a top-level section bar and the closing grand-total row.
+var (
+	reportRuleGray = [3]int{160, 160, 160}
+	reportBarGray  = [3]int{225, 225, 225}
+)
+
+// reportValueColW is the fixed width of a single-column report's right-hand
+// money column (ReportLine/ReportSubtotal/ReportGrandTotal) — wide enough
+// for a seven-figure total in parentheses.
+const reportValueColW = 32.0
+
+// ReportHeader prints the centered masthead a single-column report opens
+// with: the business name (bold), the report title, and an italicized
+// period/as-of line beneath it — e.g. "Luxury Landscapes, LLC" / "Balance
+// Sheet" / "As of Aug 31, 2026".
+func (d *Document) ReportHeader(businessName, title, subtitle string) {
+	d.pdf.SetFont("Helvetica", "B", 15)
+	d.pdf.CellFormat(contentW, 7, d.tr(businessName), "", 1, "C", false, 0, "")
+	d.pdf.SetFont("Helvetica", "", 10)
+	d.pdf.CellFormat(contentW, 5.5, d.tr(title), "", 1, "C", false, 0, "")
+	d.pdf.SetFont("Helvetica", "I", 9)
+	d.pdf.CellFormat(contentW, 5, d.tr(subtitle), "", 1, "C", false, 0, "")
+	d.pdf.Ln(5)
+}
+
+// ReportColumnHead prints a single right-aligned column label ("Total")
+// over a full-width rule — the header row of a single-column report.
+func (d *Document) ReportColumnHead(label string) {
+	d.pdf.SetFont("Helvetica", "", 9)
+	d.pdf.CellFormat(contentW, 5, d.tr(label), "", 1, "R", false, 0, "")
+	d.hrule(reportRuleGray)
+}
+
+// ReportBar prints a shaded, full-width top-level section heading — e.g.
+// "Assets" or "Liabilities and Equity" on a balance sheet, "Income" on a
+// profit and loss statement.
+func (d *Document) ReportBar(title string) {
+	d.pdf.SetFont("Helvetica", "", 9)
+	d.pdf.SetFillColor(reportBarGray[0], reportBarGray[1], reportBarGray[2])
+	d.pdf.CellFormat(contentW, 6, d.tr(title), "", 1, "L", true, 0, "")
+}
+
+// ReportHeading prints a plain (unshaded) subsection heading indented by
+// level (~4mm per level) — e.g. "Current Assets" nested under an "Assets"
+// ReportBar.
+func (d *Document) ReportHeading(title string, level int) {
+	d.pdf.SetFont("Helvetica", "", 9)
+	indent := reportIndent(level)
+	d.pdf.SetX(marginLeft + indent)
+	d.pdf.CellFormat(contentW-indent, 5.5, d.tr(title), "", 1, "L", false, 0, "")
+}
+
+// ReportLine prints one leaf account line: a label indented by level on the
+// left, its already-formatted value right-aligned in the Total column.
+func (d *Document) ReportLine(label string, value string, level int) {
+	d.pdf.SetFont("Helvetica", "", 9)
+	indent := reportIndent(level)
+	labelW := contentW - indent - reportValueColW
+	d.pdf.SetX(marginLeft + indent)
+	d.pdf.CellFormat(labelW, 5.5, d.tr(d.truncate(label, labelW-2)), "", 0, "L", false, 0, "")
+	d.pdf.CellFormat(reportValueColW, 5.5, d.tr(value), "", 1, "R", false, 0, "")
+}
+
+// ReportSubtotal prints a bold "Total for X" row bracketed by thin rules
+// above and below — a category subtotal nested under a ReportBar.
+func (d *Document) ReportSubtotal(label, value string, level int) {
+	d.hrule(reportRuleGray)
+	indent := reportIndent(level)
+	d.pdf.SetFont("Helvetica", "B", 9)
+	d.pdf.SetX(marginLeft + indent)
+	d.pdf.CellFormat(contentW-indent-reportValueColW, 6, d.tr(label), "", 0, "L", false, 0, "")
+	d.pdf.CellFormat(reportValueColW, 6, d.tr(value), "", 1, "R", false, 0, "")
+	d.hrule(reportRuleGray)
+}
+
+// ReportGrandTotal prints a bold, shaded full-width total row bracketed by
+// rules — the closing "Total for Assets" / "Net Income" style line of a
+// report.
+func (d *Document) ReportGrandTotal(label, value string) {
+	d.hrule(reportRuleGray)
+	d.pdf.SetFont("Helvetica", "B", 9.5)
+	d.pdf.SetFillColor(reportBarGray[0], reportBarGray[1], reportBarGray[2])
+	d.pdf.CellFormat(contentW-reportValueColW, 6.5, d.tr(label), "", 0, "L", true, 0, "")
+	d.pdf.CellFormat(reportValueColW, 6.5, d.tr(value), "", 1, "R", true, 0, "")
+	d.hrule(reportRuleGray)
+}
+
+func reportIndent(level int) float64 {
+	return 3.0 + float64(level)*4.0
+}
+
+// hrule draws a full-content-width horizontal rule at the current Y in the
+// given color and advances past it slightly — the only "line" this report
+// layout draws, standing in for a bordered grid's cell edges.
+func (d *Document) hrule(color [3]int) {
+	y := d.pdf.GetY()
+	d.pdf.SetDrawColor(color[0], color[1], color[2])
+	d.pdf.Line(marginLeft, y, marginLeft+contentW, y)
+	d.pdf.SetDrawColor(0, 0, 0)
+	d.pdf.Ln(1)
+}
+
 // TableColumn is one column of a Table — Header text, its width as a
 // fraction of the content width (must sum to ~1.0 across all columns), and
 // whether values right-align (numbers) or left-align (text).
@@ -276,6 +381,53 @@ func (d *Document) Table(cols []TableColumn, rows [][]string, totalRow []string)
 				text = d.truncate(text, widths[i]-2)
 			}
 			d.pdf.CellFormat(widths[i], 7, d.tr(text), "1", 0, alignOf(cols[i].Right), false, 0, "")
+		}
+		d.pdf.Ln(-1)
+	}
+}
+
+// BorderlessTable renders the same shape as Table — a header row, one row
+// per entry, and (if totalRow is non-nil) a bold total row — but with no
+// grid lines at all, vertical or horizontal: bold weight and whitespace
+// alone separate the header and total rows from the data, for a flatter,
+// more modern look. Used for line-item and breakdown tables on invoices,
+// estimates, and customer statements, where a bordered grid reads as
+// dated; RenderTrialBalance and RenderGeneralLedger keep the bordered
+// Table.
+func (d *Document) BorderlessTable(cols []TableColumn, rows [][]string, totalRow []string) {
+	widths := make([]float64, len(cols))
+	for i, c := range cols {
+		widths[i] = contentW * c.Width
+	}
+
+	d.pdf.SetFont("Helvetica", "B", 9)
+	for i, c := range cols {
+		d.pdf.CellFormat(widths[i], 7, d.tr(c.Header), "", 0, alignOf(c.Right), false, 0, "")
+	}
+	d.pdf.Ln(-1)
+	d.pdf.Ln(1)
+
+	d.pdf.SetFont("Helvetica", "", 9)
+	for _, row := range rows {
+		for i, cell := range row {
+			text := singleLine(cell)
+			if !cols[i].Right {
+				text = d.truncate(text, widths[i]-2)
+			}
+			d.pdf.CellFormat(widths[i], 6.5, d.tr(text), "", 0, alignOf(cols[i].Right), false, 0, "")
+		}
+		d.pdf.Ln(-1)
+	}
+
+	if totalRow != nil {
+		d.pdf.Ln(1)
+		d.pdf.SetFont("Helvetica", "B", 9)
+		for i, cell := range totalRow {
+			text := singleLine(cell)
+			if !cols[i].Right {
+				text = d.truncate(text, widths[i]-2)
+			}
+			d.pdf.CellFormat(widths[i], 7, d.tr(text), "", 0, alignOf(cols[i].Right), false, 0, "")
 		}
 		d.pdf.Ln(-1)
 	}

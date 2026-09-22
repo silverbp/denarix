@@ -39,7 +39,7 @@ func RenderEstimate(business, customer Party, est *denarixv1.Estimate, breakdown
 			formatMoneyString(li.GetLineSubtotal().GetValue()),
 		})
 	}
-	d.Table(cols, rows, nil)
+	d.BorderlessTable(cols, rows, nil)
 
 	if showsTaxBreakdown(breakdown) {
 		d.Spacer(2)
@@ -54,7 +54,7 @@ func RenderEstimate(business, customer Party, est *denarixv1.Estimate, breakdown
 		for _, b := range breakdown {
 			breakdownRows = append(breakdownRows, []string{b.Label, formatMoney(b.Net), formatMoney(b.Tax), formatMoney(b.Total)})
 		}
-		d.Table(breakdownCols, breakdownRows, nil)
+		d.BorderlessTable(breakdownCols, breakdownRows, nil)
 	}
 
 	d.Spacer(2)
