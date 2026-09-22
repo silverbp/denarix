@@ -14,6 +14,7 @@ import (
 	"github.com/silverbp/denarix/internal/auth"
 	"github.com/silverbp/denarix/internal/datepb"
 	"github.com/silverbp/denarix/internal/db"
+	"github.com/silverbp/denarix/internal/db/sqlcgen"
 	"github.com/silverbp/denarix/internal/moneypb"
 	"github.com/silverbp/denarix/internal/reporting"
 )
@@ -50,14 +51,11 @@ func translateStatementError(err error) error {
 	return translatePgError(err)
 }
 
-// contactScope authorizes a per-contact report, returning the contact's
-// business for the PDF header.
-func (s *reportingService) contactScope(ctx context.Context, contactID int64) (businessID int64, err error) {
-	c, err := contactRes.load(ctx, s.store.Queries, contactID, "VIEWER")
-	if err != nil {
-		return 0, err
-	}
-	return c.BusinessID, nil
+// contactScope authorizes a per-contact report, returning the contact row
+// - its BusinessID for the PDF header, and (for the PDF variant) the whole
+// row to build the recipient's mailing-address Party from.
+func (s *reportingService) contactScope(ctx context.Context, contactID int64) (sqlcgen.Contact, error) {
+	return contactRes.load(ctx, s.store.Queries, contactID, "VIEWER")
 }
 
 func (s *reportingService) GetTrialBalance(ctx context.Context, req *denarixv1.GetTrialBalanceRequest) (*denarixv1.GetTrialBalanceResponse, error) {

@@ -19,14 +19,24 @@ import (
 )
 
 const (
-	pageWidth   = 210.0 // A4, mm
+	// pageWidth/pageHeight are US Letter (8.5in x 11in) — chosen over A4 so
+	// invoices, estimates, and customer statements can be tri-folded into a
+	// standard #10 window envelope (see WindowEnvelopeHeader); every report
+	// in this package uses the same page size for consistency even though
+	// only those three documents rely on it.
+	pageWidth   = 215.9
+	pageHeight  = 279.4
 	marginLeft  = 15.0
 	marginRight = 15.0
 	// marginBottom is generous enough to fit Document.SetFooter's rule plus
 	// several lines of text (a business name, a two-line address, phone,
 	// email) without colliding with the page's normal content.
 	marginBottom = 30.0
-	contentW     = pageWidth - marginLeft - marginRight
+	// marginTop matches the value passed to SetMargins below — pulled out
+	// as a constant so renderHeader can reset the cursor to it after
+	// drawing the page-number stamp, which sits above it in the gutter.
+	marginTop = 15.0
+	contentW  = pageWidth - marginLeft - marginRight
 )
 
 // Document wraps fpdf with the layout conventions shared by every report
@@ -42,17 +52,59 @@ type Document struct {
 	tr func(string) string
 	// footer, if set via SetFooter, is printed at the bottom of every page.
 	footer *Party
+	// activeTableHeader, while non-nil, is invoked by renderHeader on every
+	// page break so a table's column-header row reprints at the top of
+	// each continuation page — set by BorderlessTable/Table around their
+	// row loop, cleared once the table finishes. Without this, a table
+	// that spans a page break opens its continuation page with data rows
+	// and no header, which is disorienting on anything long enough to
+	// paginate (a general ledger, a busy customer statement).
+	activeTableHeader func()
 }
 
-// New starts a new A4 document with margins set and the first page added.
+// New starts a new US Letter document with margins set, page-number
+// aliasing enabled (see renderHeader), and the first page added.
 func New() *Document {
-	p := fpdf.New("P", "mm", "A4", "")
-	p.SetMargins(marginLeft, 15, marginRight)
+	p := fpdf.New("P", "mm", "Letter", "")
+	p.SetMargins(marginLeft, marginTop, marginRight)
 	p.SetAutoPageBreak(true, marginBottom)
+	p.AliasNbPages("")
 	d := &Document{pdf: p, tr: p.UnicodeTranslatorFromDescriptor("")}
 	p.SetFooterFunc(func() { d.renderFooter() })
+	p.SetHeaderFunc(func() { d.renderHeader() })
 	p.AddPage()
 	return d
+}
+
+// renderHeader runs at the top of every page (including the first) via
+// SetHeaderFunc: it stamps a small "Page X of Y" marker in the gutter
+// above the normal content area, then — if a table is mid-render when the
+// page breaks — reprints that table's column-header row (see
+// activeTableHeader) before resetting the cursor to the page's normal
+// content origin.
+func (d *Document) renderHeader() {
+	d.pdf.SetFont("Helvetica", "", 8)
+	d.pdf.SetTextColor(120, 120, 120)
+	d.pdf.SetXY(pageWidth-marginRight-40, 7)
+	d.pdf.CellFormat(40, 4, d.tr(fmt.Sprintf("Page %d of {nb}", d.pdf.PageNo())), "", 0, "R", false, 0, "")
+	d.pdf.SetTextColor(0, 0, 0)
+	d.pdf.SetXY(marginLeft, marginTop)
+	if d.activeTableHeader != nil {
+		d.activeTableHeader()
+	}
+}
+
+// reserve forces an explicit page break first if fewer than h mm remain
+// above the bottom margin, so a block that must print as one visual unit —
+// several SummaryBlock rows, a rule-bracketed report subtotal — never gets
+// split by a page break landing in the middle of it. A single CellFormat
+// row can't be split this way (fpdf's own auto-page-break already moves an
+// entire cell row to the next page rather than clipping it mid-row); this
+// covers the multi-row case fpdf has no native "keep together" for.
+func (d *Document) reserve(h float64) {
+	if d.pdf.GetY()+h > pageHeight-marginBottom {
+		d.pdf.AddPage()
+	}
 }
 
 // SetFooter prints p's name and detail lines, one per centered row, below
@@ -70,6 +122,7 @@ func (d *Document) renderFooter() {
 		return
 	}
 	lines := append([]string{d.footer.Name}, d.footer.Lines...)
+	lines = append(lines, d.footer.Contact...)
 	const lineH = 3.5
 	height := 3.0 + float64(len(lines))*lineH + 2.0
 	d.pdf.SetY(-height)
@@ -114,16 +167,25 @@ func (d *Document) CenteredTitle(text string) {
 	d.pdf.Ln(2)
 }
 
-// Party is a name plus arbitrary detail lines (address, phone, email) for
-// AddressBlock.
+// Party is a name plus two kinds of detail line: Lines is the mailing
+// address alone — exactly what's safe to print inside a window envelope's
+// die-cut window (see WindowEnvelopeHeader), nothing else — and Contact is
+// everything else (phone, email, ...), which prints alongside Lines in a
+// flowing AddressBlock or a page footer (SetFooter) but is never put
+// inside a fixed-position window.
 type Party struct {
-	Name  string
-	Lines []string
+	Name    string
+	Lines   []string
+	Contact []string
 }
 
 // AddressBlock prints two Party blocks side by side, e.g. the customer
 // being billed on the left and the business issuing the document on the
-// right — each as a bold name line followed by plain detail lines.
+// right — each as a bold name line followed by its Lines then Contact
+// detail lines. Superseded by WindowEnvelopeHeader for invoices, estimates,
+// and customer statements, which need their recipient address at a fixed
+// position instead of wherever this flowing two-column layout lands it;
+// kept for any future document that wants a flowing address block instead.
 func (d *Document) AddressBlock(left, right Party) {
 	colW := contentW / 2
 	startY := d.pdf.GetY()
@@ -139,20 +201,64 @@ func (d *Document) AddressBlock(left, right Party) {
 	d.pdf.Ln(4)
 }
 
-// partyColumn prints one Party's name and detail lines at (x, y), each
-// line's own row so the two columns of an AddressBlock don't have to have
-// the same number of lines, and returns the y position just past its last
-// line.
+// partyColumn prints one Party's name, Lines, and Contact detail lines at
+// (x, y), each line its own row so the two columns of an AddressBlock
+// don't have to have the same number of lines, and returns the y position
+// just past its last line.
 func (d *Document) partyColumn(x, y, w float64, p Party) float64 {
 	d.pdf.SetXY(x, y)
 	d.pdf.SetFont("Helvetica", "B", 10)
 	d.pdf.CellFormat(w, 5.5, d.tr(p.Name), "", 0, "L", false, 0, "")
 	d.pdf.SetFont("Helvetica", "", 9)
-	for i, l := range p.Lines {
+	all := append(append([]string{}, p.Lines...), p.Contact...)
+	for i, l := range all {
 		d.pdf.SetXY(x, y+5.5+float64(i)*5)
 		d.pdf.CellFormat(w, 5, d.tr(l), "", 0, "L", false, 0, "")
 	}
-	return y + 5.5 + float64(len(p.Lines))*5
+	return y + 5.5 + float64(len(all))*5
+}
+
+// Fixed window positions for a standard double-window #10 invoice envelope
+// on US Letter paper, tri-folded — the convention most double-window
+// invoice envelope products (and Word's own double-window envelope
+// template) are built around: a return-address window near the top-left,
+// a delivery-address window lower and offset to the right. Exact offsets
+// vary a little between envelope manufacturers, so these leave generous
+// padding inside each window; verify against actual envelope stock before
+// a real print run.
+const (
+	envReturnX, envReturnY, envReturnW, envReturnH         = 12.7, 12.7, 88.9, 19.05 // 0.5in, 0.5in, 3.5in, 0.75in
+	envDeliveryX, envDeliveryY, envDeliveryW, envDeliveryH = 101.6, 61.0, 88.9, 25.4 // 4in, 2.4in, 3.5in, 1in
+)
+
+// WindowEnvelopeHeader prints business (the return address) and recipient
+// (the delivery address) at the fixed positions above, instead of
+// AddressBlock's flowing two-column layout, so both addresses land inside
+// a double-window #10 envelope's die-cut windows once the page is
+// tri-folded. Only Name and Lines print — never Contact (phone/email),
+// which would spill outside the window; put that on SetFooter instead.
+// Resets the cursor to just below the delivery window when done, so the
+// caller's next call (CenteredTitle, ReportHeader, ...) continues in the
+// normal content flow.
+func (d *Document) WindowEnvelopeHeader(business, recipient Party) {
+	d.windowBlock(envReturnX, envReturnY, envReturnW, envReturnH, business)
+	d.windowBlock(envDeliveryX, envDeliveryY, envDeliveryW, envDeliveryH, recipient)
+	d.pdf.SetXY(marginLeft, envDeliveryY+envDeliveryH+6)
+}
+
+// windowBlock prints p's Name (bold) and Lines at a fixed (x, y), wrapping
+// none of it — a window envelope's address block is a handful of short
+// lines by construction (a street address, a city/state/zip), so clipping
+// never comes up in practice the way it does for a table cell.
+func (d *Document) windowBlock(x, y, w, h float64, p Party) {
+	d.pdf.SetXY(x, y)
+	d.pdf.SetFont("Helvetica", "B", 9.5)
+	d.pdf.CellFormat(w, 4.5, d.tr(p.Name), "", 2, "L", false, 0, "")
+	d.pdf.SetFont("Helvetica", "", 9)
+	for _, l := range p.Lines {
+		d.pdf.SetX(x)
+		d.pdf.CellFormat(w, 4.2, d.tr(l), "", 2, "L", false, 0, "")
+	}
 }
 
 // Subtitle prints a smaller line under the title, e.g. a date range or
@@ -185,12 +291,27 @@ type SummaryRow struct {
 
 // SummaryBlock prints a label/value block anchored to the content area's
 // right edge — lining it up under the right-hand columns of the table
-// above it — instead of KeyValueRow/MoneyRow's left margin.
+// above it — instead of KeyValueRow/MoneyRow's left margin. Reserves its
+// own height first (see Document.reserve) so a page break can't land
+// between two of its rows — e.g. separating "Total" from "Balance Due".
 func (d *Document) SummaryBlock(rows []SummaryRow) {
 	const blockW = 75.0
 	labelW := blockW * 0.5
 	valueW := blockW - labelW
 	x := marginLeft + contentW - blockW
+
+	var need float64
+	for _, r := range rows {
+		if r.Divider {
+			need += 1.5
+		}
+		if r.Bold {
+			need += 7
+		} else {
+			need += 5.5
+		}
+	}
+	d.reserve(need)
 
 	for _, r := range rows {
 		style, size, h := "", 9.0, 5.5
@@ -298,8 +419,11 @@ func (d *Document) ReportLine(label string, value string, level int) {
 }
 
 // ReportSubtotal prints a bold "Total for X" row bracketed by thin rules
-// above and below — a category subtotal nested under a ReportBar.
+// above and below — a category subtotal nested under a ReportBar. Reserves
+// its own height first (see Document.reserve) so the two rules can't land
+// on different pages than the row they bracket.
 func (d *Document) ReportSubtotal(label, value string, level int) {
+	d.reserve(9)
 	d.hrule(reportRuleGray)
 	indent := reportIndent(level)
 	d.pdf.SetFont("Helvetica", "B", 9)
@@ -311,8 +435,10 @@ func (d *Document) ReportSubtotal(label, value string, level int) {
 
 // ReportGrandTotal prints a bold, shaded full-width total row bracketed by
 // rules — the closing "Total for Assets" / "Net Income" style line of a
-// report.
+// report. Reserves its own height first (see Document.reserve) so it never
+// splits across a page break.
 func (d *Document) ReportGrandTotal(label, value string) {
+	d.reserve(9.5)
 	d.hrule(reportRuleGray)
 	d.pdf.SetFont("Helvetica", "B", 9.5)
 	d.pdf.SetFillColor(reportBarGray[0], reportBarGray[1], reportBarGray[2])
@@ -347,19 +473,26 @@ type TableColumn struct {
 
 // Table renders a bordered table: a shaded header row, then one row per
 // entry in rows (each must have len(cols) cells), then — if totalRow is
-// non-nil — a bold total row.
+// non-nil — a bold total row. The header row reprints at the top of every
+// continuation page for as long as the table is rendering (see
+// activeTableHeader) — a table long enough to paginate would otherwise
+// open its second page with bare data rows and no column labels.
 func (d *Document) Table(cols []TableColumn, rows [][]string, totalRow []string) {
 	widths := make([]float64, len(cols))
 	for i, c := range cols {
 		widths[i] = contentW * c.Width
 	}
 
-	d.pdf.SetFont("Helvetica", "B", 9)
-	d.pdf.SetFillColor(230, 230, 230)
-	for i, c := range cols {
-		d.pdf.CellFormat(widths[i], 7, d.tr(c.Header), "1", 0, alignOf(c.Right), true, 0, "")
+	printHeader := func() {
+		d.pdf.SetFont("Helvetica", "B", 9)
+		d.pdf.SetFillColor(230, 230, 230)
+		for i, c := range cols {
+			d.pdf.CellFormat(widths[i], 7, d.tr(c.Header), "1", 0, alignOf(c.Right), true, 0, "")
+		}
+		d.pdf.Ln(-1)
 	}
-	d.pdf.Ln(-1)
+	printHeader()
+	d.activeTableHeader = printHeader
 
 	d.pdf.SetFont("Helvetica", "", 9)
 	for _, row := range rows {
@@ -372,6 +505,7 @@ func (d *Document) Table(cols []TableColumn, rows [][]string, totalRow []string)
 		}
 		d.pdf.Ln(-1)
 	}
+	d.activeTableHeader = nil
 
 	if totalRow != nil {
 		d.pdf.SetFont("Helvetica", "B", 9)
@@ -390,22 +524,26 @@ func (d *Document) Table(cols []TableColumn, rows [][]string, totalRow []string)
 // per entry, and (if totalRow is non-nil) a bold total row — but with no
 // grid lines at all, vertical or horizontal: bold weight and whitespace
 // alone separate the header and total rows from the data, for a flatter,
-// more modern look. Used for line-item and breakdown tables on invoices,
-// estimates, and customer statements, where a bordered grid reads as
-// dated; RenderTrialBalance and RenderGeneralLedger keep the bordered
-// Table.
+// more modern look. Used by every report and trading document in this
+// package. Like Table, its header row reprints at the top of every
+// continuation page for as long as the table is rendering (see
+// activeTableHeader).
 func (d *Document) BorderlessTable(cols []TableColumn, rows [][]string, totalRow []string) {
 	widths := make([]float64, len(cols))
 	for i, c := range cols {
 		widths[i] = contentW * c.Width
 	}
 
-	d.pdf.SetFont("Helvetica", "B", 9)
-	for i, c := range cols {
-		d.pdf.CellFormat(widths[i], 7, d.tr(c.Header), "", 0, alignOf(c.Right), false, 0, "")
+	printHeader := func() {
+		d.pdf.SetFont("Helvetica", "B", 9)
+		for i, c := range cols {
+			d.pdf.CellFormat(widths[i], 7, d.tr(c.Header), "", 0, alignOf(c.Right), false, 0, "")
+		}
+		d.pdf.Ln(-1)
+		d.pdf.Ln(1)
 	}
-	d.pdf.Ln(-1)
-	d.pdf.Ln(1)
+	printHeader()
+	d.activeTableHeader = printHeader
 
 	d.pdf.SetFont("Helvetica", "", 9)
 	for _, row := range rows {
@@ -418,6 +556,7 @@ func (d *Document) BorderlessTable(cols []TableColumn, rows [][]string, totalRow
 		}
 		d.pdf.Ln(-1)
 	}
+	d.activeTableHeader = nil
 
 	if totalRow != nil {
 		d.pdf.Ln(1)

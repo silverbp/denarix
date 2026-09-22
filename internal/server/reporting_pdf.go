@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	denarixv1 "github.com/silverbp/denarix/gen/denarix/v1"
+	"github.com/silverbp/denarix/internal/db/sqlcgen"
 	"github.com/silverbp/denarix/internal/pdf"
 	"github.com/silverbp/denarix/internal/reporting"
 )
@@ -18,17 +19,18 @@ import (
 // handlers (reporting_service.go) plus the business name for the page
 // header, then the matching internal/pdf renderer.
 
-// pdfScope authorizes a business-wide report and returns the business name
-// for the PDF header.
-func (s *reportingService) pdfScope(ctx context.Context, businessID int64) (string, error) {
+// pdfScope authorizes a business-wide report and returns the business row
+// for the PDF header (and, for a document mailed to a contact, the return-
+// address Party businessParty builds from it).
+func (s *reportingService) pdfScope(ctx context.Context, businessID int64) (sqlcgen.Business, error) {
 	if err := s.scope(ctx, businessID); err != nil {
-		return "", err
+		return sqlcgen.Business{}, err
 	}
 	b, err := s.store.Queries.GetBusiness(ctx, businessID)
 	if err != nil {
-		return "", translatePgError(err)
+		return sqlcgen.Business{}, translatePgError(err)
 	}
-	return b.Name, nil
+	return b, nil
 }
 
 // renderedPDF wraps a renderer's result into the uniform Internal status.
@@ -42,7 +44,7 @@ func renderedPDF(content []byte, err error) ([]byte, error) {
 const pdfDateLayout = "2006-01-02"
 
 func (s *reportingService) GetTrialBalancePdf(ctx context.Context, req *denarixv1.GetTrialBalancePdfRequest) (*denarixv1.GetTrialBalancePdfResponse, error) {
-	businessName, err := s.pdfScope(ctx, req.GetBusinessId())
+	business, err := s.pdfScope(ctx, req.GetBusinessId())
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +56,7 @@ func (s *reportingService) GetTrialBalancePdf(ctx context.Context, req *denarixv
 	if err != nil {
 		return nil, translatePgError(err)
 	}
-	content, err := renderedPDF(pdf.RenderTrialBalance(businessName, asOf.Format(pdfDateLayout), result))
+	content, err := renderedPDF(pdf.RenderTrialBalance(business.Name, asOf.Format(pdfDateLayout), result))
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +64,7 @@ func (s *reportingService) GetTrialBalancePdf(ctx context.Context, req *denarixv
 }
 
 func (s *reportingService) GetBalanceSheetPdf(ctx context.Context, req *denarixv1.GetBalanceSheetPdfRequest) (*denarixv1.GetBalanceSheetPdfResponse, error) {
-	businessName, err := s.pdfScope(ctx, req.GetBusinessId())
+	business, err := s.pdfScope(ctx, req.GetBusinessId())
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +76,7 @@ func (s *reportingService) GetBalanceSheetPdf(ctx context.Context, req *denarixv
 	if err != nil {
 		return nil, translatePgError(err)
 	}
-	content, err := renderedPDF(pdf.RenderBalanceSheet(businessName, asOf.Format(pdfDateLayout), result))
+	content, err := renderedPDF(pdf.RenderBalanceSheet(business.Name, asOf.Format(pdfDateLayout), result))
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +84,7 @@ func (s *reportingService) GetBalanceSheetPdf(ctx context.Context, req *denarixv
 }
 
 func (s *reportingService) GetIncomeStatementPdf(ctx context.Context, req *denarixv1.GetIncomeStatementPdfRequest) (*denarixv1.GetIncomeStatementPdfResponse, error) {
-	businessName, err := s.pdfScope(ctx, req.GetBusinessId())
+	business, err := s.pdfScope(ctx, req.GetBusinessId())
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +96,7 @@ func (s *reportingService) GetIncomeStatementPdf(ctx context.Context, req *denar
 	if err != nil {
 		return nil, translatePgError(err)
 	}
-	content, err := renderedPDF(pdf.RenderIncomeStatement(businessName, periodLabel(start, end), result))
+	content, err := renderedPDF(pdf.RenderIncomeStatement(business.Name, periodLabel(start, end), result))
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +104,7 @@ func (s *reportingService) GetIncomeStatementPdf(ctx context.Context, req *denar
 }
 
 func (s *reportingService) GetGeneralLedgerPdf(ctx context.Context, req *denarixv1.GetGeneralLedgerPdfRequest) (*denarixv1.GetGeneralLedgerPdfResponse, error) {
-	businessName, err := s.pdfScope(ctx, req.GetBusinessId())
+	business, err := s.pdfScope(ctx, req.GetBusinessId())
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +119,7 @@ func (s *reportingService) GetGeneralLedgerPdf(ctx context.Context, req *denarix
 	if err != nil {
 		return nil, translatePgError(err)
 	}
-	content, err := renderedPDF(pdf.RenderGeneralLedger(businessName, periodLabel(start, end), result))
+	content, err := renderedPDF(pdf.RenderGeneralLedger(business.Name, periodLabel(start, end), result))
 	if err != nil {
 		return nil, err
 	}
@@ -125,11 +127,11 @@ func (s *reportingService) GetGeneralLedgerPdf(ctx context.Context, req *denarix
 }
 
 func (s *reportingService) GetCustomerStatementPdf(ctx context.Context, req *denarixv1.GetCustomerStatementPdfRequest) (*denarixv1.GetCustomerStatementPdfResponse, error) {
-	businessID, err := s.contactScope(ctx, req.GetContactId())
+	contact, err := s.contactScope(ctx, req.GetContactId())
 	if err != nil {
 		return nil, err
 	}
-	businessName, err := s.pdfScope(ctx, businessID)
+	business, err := s.pdfScope(ctx, contact.BusinessID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +143,7 @@ func (s *reportingService) GetCustomerStatementPdf(ctx context.Context, req *den
 	if err != nil {
 		return nil, translateStatementError(err)
 	}
-	content, err := renderedPDF(pdf.RenderCustomerStatement(businessName, result))
+	content, err := renderedPDF(pdf.RenderCustomerStatement(businessParty(business), billToParty(contact), result))
 	if err != nil {
 		return nil, err
 	}

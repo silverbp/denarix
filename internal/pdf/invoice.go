@@ -26,9 +26,13 @@ type TaxBreakdownRow struct {
 // populated) to PDF. Takes the proto type directly, unlike the report
 // renderers — an invoice is a document the API already returns fully
 // formed, with no separate Go-native computation layer to render from.
+// business/billTo print inside a double-window #10 envelope's die-cut
+// windows (see WindowEnvelopeHeader) — business's phone/email still show
+// up via the footer (SetFooter), but billTo's don't print anywhere on the
+// page, a necessary trade-off for window-envelope compatibility.
 func RenderInvoice(business, billTo Party, inv *denarixv1.Invoice, breakdown []TaxBreakdownRow) ([]byte, error) {
 	d := New()
-	d.AddressBlock(billTo, business)
+	d.WindowEnvelopeHeader(business, billTo)
 	d.SetFooter(business)
 
 	title := "Sales Invoice"

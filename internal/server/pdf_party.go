@@ -13,30 +13,39 @@ import (
 // PDF address blocks for the business issuing a document and the
 // contact being billed - shared by GetInvoicePdf and GetEstimatePdf.
 
-// businessParty builds the PDF address block for the business issuing an
-// invoice: name, mailing address, phone, and email.
+// businessParty builds the PDF party for the business issuing a document:
+// name and mailing address in Lines (window-safe — see
+// pdf.WindowEnvelopeHeader), phone and email in Contact (shown in the page
+// footer, never inside a window).
 func businessParty(b sqlcgen.Business) pdf.Party {
-	lines := formatAddressLines(b.AddressLine1, b.AddressLine2, b.City, b.State, b.PostalCode)
-	if v := derefOr(b.Phone, ""); v != "" {
-		lines = append(lines, v)
+	return pdf.Party{
+		Name:    b.Name,
+		Lines:   formatAddressLines(b.AddressLine1, b.AddressLine2, b.City, b.State, b.PostalCode),
+		Contact: contactLines(b.Phone, b.Email),
 	}
-	if v := derefOr(b.Email, ""); v != "" {
-		lines = append(lines, v)
-	}
-	return pdf.Party{Name: b.Name, Lines: lines}
 }
 
-// billToParty builds the PDF address block for the contact being billed:
-// name, billing address, phone, and email.
+// billToParty builds the PDF party for the contact being billed: name and
+// billing address in Lines (window-safe), phone and email in Contact.
 func billToParty(c sqlcgen.Contact) pdf.Party {
-	lines := formatAddressLines(c.BillingAddressLine1, c.BillingAddressLine2, c.BillingCity, c.BillingState, c.BillingPostalCode)
-	if v := derefOr(c.Phone, ""); v != "" {
+	return pdf.Party{
+		Name:    c.Name,
+		Lines:   formatAddressLines(c.BillingAddressLine1, c.BillingAddressLine2, c.BillingCity, c.BillingState, c.BillingPostalCode),
+		Contact: contactLines(c.Phone, c.Email),
+	}
+}
+
+// contactLines collects whichever of phone/email are set into a Party's
+// Contact slice, in that order.
+func contactLines(phone, email *string) []string {
+	var lines []string
+	if v := derefOr(phone, ""); v != "" {
 		lines = append(lines, v)
 	}
-	if v := derefOr(c.Email, ""); v != "" {
+	if v := derefOr(email, ""); v != "" {
 		lines = append(lines, v)
 	}
-	return pdf.Party{Name: c.Name, Lines: lines}
+	return lines
 }
 
 // formatAddressLines renders a street address as "line1", "line2" (if

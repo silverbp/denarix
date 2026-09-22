@@ -248,13 +248,17 @@ func RenderGeneralLedger(businessName string, periodLabel string, r *reporting.G
 	return d.Bytes()
 }
 
-// RenderCustomerStatement renders a CustomerStatementResult to PDF, with the
-// same centered masthead every report in this package uses now (see
-// RenderBalanceSheet, RenderIncomeStatement); its Activity/Aging tables
+// RenderCustomerStatement renders a CustomerStatementResult to PDF: a
+// WindowEnvelopeHeader (business/recipient print inside a double-window
+// #10 envelope's windows, same as RenderInvoice/RenderEstimate) followed
+// by the same centered masthead every report in this package uses (see
+// RenderBalanceSheet, RenderIncomeStatement). Its Activity/Aging tables
 // were already switched to BorderlessTable.
-func RenderCustomerStatement(businessName string, r *reporting.CustomerStatementResult) ([]byte, error) {
+func RenderCustomerStatement(business, recipient Party, r *reporting.CustomerStatementResult) ([]byte, error) {
 	d := New()
-	d.ReportHeader(businessName, "Customer Statement - "+r.ContactName, fmt.Sprintf("%s through %s", fmtDate(r.PeriodStart), fmtDate(r.PeriodEnd)))
+	d.WindowEnvelopeHeader(business, recipient)
+	d.SetFooter(business)
+	d.ReportHeader(business.Name, "Customer Statement - "+r.ContactName, fmt.Sprintf("%s through %s", fmtDate(r.PeriodStart), fmtDate(r.PeriodEnd)))
 
 	d.SetSectionTitle("Activity")
 	activityCols := []TableColumn{

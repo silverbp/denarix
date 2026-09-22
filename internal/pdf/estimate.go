@@ -8,12 +8,13 @@ import (
 )
 
 // RenderEstimate renders an *denarixv1.Estimate (with its line items already
-// populated) to PDF. Mirrors RenderInvoice's layout — same address block,
-// line item table, and tax breakdown — since an estimate is the same kind
-// of pre-sale document, just without payment/balance fields.
+// populated) to PDF. Mirrors RenderInvoice's layout — same windowed
+// address header, line item table, and tax breakdown — since an estimate
+// is the same kind of pre-sale document, just without payment/balance
+// fields.
 func RenderEstimate(business, customer Party, est *denarixv1.Estimate, breakdown []TaxBreakdownRow) ([]byte, error) {
 	d := New()
-	d.AddressBlock(customer, business)
+	d.WindowEnvelopeHeader(business, customer)
 	d.SetFooter(business)
 
 	d.CenteredTitle("Estimate")
