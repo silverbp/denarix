@@ -31,9 +31,9 @@ func RenderTrialBalance(businessName string, asOf string, r *reporting.TrialBala
 	}
 	var rows [][]string
 	for _, l := range r.Lines {
-		rows = append(rows, []string{l.Code, l.Name, l.Debit.StringFixed(2), l.Credit.StringFixed(2)})
+		rows = append(rows, []string{l.Code, l.Name, formatMoney(l.Debit), formatMoney(l.Credit)})
 	}
-	d.BorderlessTable(cols, rows, []string{"", "Total", r.TotalDebit.StringFixed(2), r.TotalCredit.StringFixed(2)})
+	d.BorderlessTable(cols, rows, []string{"", "Total", formatMoney(r.TotalDebit), formatMoney(r.TotalCredit)})
 
 	return d.Bytes()
 }
@@ -240,25 +240,32 @@ func RenderGeneralLedger(businessName string, periodLabel string, r *reporting.G
 	for _, l := range r.Lines {
 		rows = append(rows, []string{
 			fmtDate(l.TransactionDate), fmt.Sprintf("%d", l.LedgerTransactionID),
-			l.Debit.StringFixed(2), l.Credit.StringFixed(2), l.RunningBalance.StringFixed(2),
+			formatMoney(l.Debit), formatMoney(l.Credit), formatMoney(l.RunningBalance),
 		})
 	}
-	d.BorderlessTable(cols, rows, []string{"", "", "", "Ending Balance", r.EndingBalance.StringFixed(2)})
+	d.BorderlessTable(cols, rows, []string{"", "", "", "Ending Balance", formatMoney(r.EndingBalance)})
 
 	return d.Bytes()
 }
 
-// RenderCustomerStatement renders a CustomerStatementResult to PDF: a
-// WindowEnvelopeHeader (business/recipient print inside a double-window
-// #10 envelope's windows, same as RenderInvoice/RenderEstimate) followed
-// by the same centered masthead every report in this package uses (see
-// RenderBalanceSheet, RenderIncomeStatement). Its Activity/Aging tables
-// were already switched to BorderlessTable.
+// RenderCustomerStatement renders a CustomerStatementResult to PDF, headed
+// the same way as RenderInvoice/RenderEstimate — a WindowEnvelopeHeader
+// (business/recipient print inside a double-window #10 envelope's
+// windows), a KeyValueBlock of metadata beside it, and a CenteredTitle —
+// rather than the plain centered masthead RenderBalanceSheet/
+// RenderIncomeStatement use, since unlike those two a statement is mailed
+// to a specific contact.
 func RenderCustomerStatement(business, recipient Party, r *reporting.CustomerStatementResult) ([]byte, error) {
 	d := New()
 	d.WindowEnvelopeHeader(business, recipient)
 	d.SetFooter(business)
-	d.ReportHeader(business.Name, "Customer Statement - "+r.ContactName, fmt.Sprintf("%s through %s", fmtDate(r.PeriodStart), fmtDate(r.PeriodEnd)))
+	d.CenteredTitle("Customer Statement")
+	d.KeyValueBlock([][2]string{
+		{"Customer", r.ContactName},
+		{"Period Start", fmtDate(r.PeriodStart)},
+		{"Period End", fmtDate(r.PeriodEnd)},
+	})
+	d.Spacer(4)
 
 	d.SetSectionTitle("Activity")
 	activityCols := []TableColumn{
@@ -271,10 +278,10 @@ func RenderCustomerStatement(business, recipient Party, r *reporting.CustomerSta
 	var activityRows [][]string
 	for _, a := range r.Activity {
 		activityRows = append(activityRows, []string{
-			fmtDate(a.Date), a.Description, a.Debit.StringFixed(2), a.Credit.StringFixed(2), a.RunningBalance.StringFixed(2),
+			fmtDate(a.Date), a.Description, formatMoney(a.Debit), formatMoney(a.Credit), formatMoney(a.RunningBalance),
 		})
 	}
-	d.BorderlessTable(activityCols, activityRows, []string{"", "", "", "Ending Balance", r.EndingBalance.StringFixed(2)})
+	d.BorderlessTable(activityCols, activityRows, []string{"", "", "", "Ending Balance", formatMoney(r.EndingBalance)})
 
 	d.Spacer(4)
 	d.SetSectionTitle("Aging")
@@ -287,7 +294,7 @@ func RenderCustomerStatement(business, recipient Party, r *reporting.CustomerSta
 	}
 	var agingRow []string
 	for _, b := range r.AgingBuckets {
-		agingRow = append(agingRow, b.Amount.StringFixed(2))
+		agingRow = append(agingRow, formatMoney(b.Amount))
 	}
 	d.BorderlessTable(agingCols, [][]string{agingRow}, nil)
 

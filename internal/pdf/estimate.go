@@ -19,10 +19,12 @@ func RenderEstimate(business, customer Party, est *denarixv1.Estimate, breakdown
 
 	d.CenteredTitle("Estimate")
 
-	d.KeyValueRow("Estimate Number", est.GetEstimateNumber())
-	d.KeyValueRow("Estimate Date", formatProtoDate(est.GetEstimateDate()))
-	d.KeyValueRow("Expiration Date", formatProtoDate(est.GetExpirationDate()))
-	d.KeyValueRow("Status", est.GetStatus())
+	d.KeyValueBlock([][2]string{
+		{"Estimate Number", est.GetEstimateNumber()},
+		{"Estimate Date", formatProtoDate(est.GetEstimateDate())},
+		{"Expiration Date", formatProtoDate(est.GetExpirationDate())},
+		{"Status", est.GetStatus()},
+	})
 	d.Spacer(4)
 
 	cols := []TableColumn{

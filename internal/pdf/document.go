@@ -220,15 +220,19 @@ func (d *Document) partyColumn(x, y, w float64, p Party) float64 {
 
 // Fixed window positions for a standard double-window #10 invoice envelope
 // on US Letter paper, tri-folded — both windows sit on the same left edge,
-// stacked vertically (a small return-address window above a larger
-// delivery-address window), which is what the physical product looks like;
-// they are not side by side. Exact offsets vary a little between envelope
+// stacked close together (a small return-address window directly above a
+// larger delivery-address window, separated by a gap on the order of the
+// smaller window's own height, not a large blank band), which is what the
+// physical product looks like; they are not side by side, and they are
+// not spread far apart. Exact offsets vary a little between envelope
 // manufacturers, so these leave generous padding inside each window;
 // verify against actual envelope stock before a real print run.
 const (
-	envLeft                                  = 12.7              // 0.5in, shared by both windows
-	envReturnY, envReturnW, envReturnH       = 12.7, 88.9, 19.05 // 0.5in, 3.5in, 0.75in
-	envDeliveryY, envDeliveryW, envDeliveryH = 61.0, 101.6, 25.4 // 2.4in, 4in, 1in
+	envLeft                            = 12.7              // 0.5in, shared by both windows
+	envGap                             = 17.5              // gap between the two windows
+	envReturnY, envReturnW, envReturnH = 12.7, 88.9, 19.05 // 0.5in, 3.5in, 0.75in
+	envDeliveryW, envDeliveryH         = 101.6, 25.4       // 4in, 1in
+	envDeliveryY                       = envReturnY + envReturnH + envGap
 )
 
 // WindowEnvelopeHeader prints business (the return address) and recipient
@@ -259,6 +263,47 @@ func (d *Document) windowBlock(x, y, w, h float64, p Party) {
 		d.pdf.SetX(x)
 		d.pdf.CellFormat(w, 4.2, d.tr(l), "", 2, "L", false, 0, "")
 	}
+}
+
+// envMetaX/envMetaY/envMetaW mark the empty space beside a
+// WindowEnvelopeHeader's return-address window — level with it, clear of
+// its right edge, and well above the delivery-address window lower on the
+// page — free for a handful of label/value rows (invoice number, date,
+// status) that would otherwise cost vertical space in the normal content
+// flow, which on a windowed document is already scarce (the delivery
+// window pushes everything else down the page).
+const (
+	envMetaX = envLeft + envReturnW + 8 // clear of the return window's right edge
+	envMetaY = envReturnY               // level with the return window
+	envMetaW = pageWidth - marginRight - envMetaX
+)
+
+// KeyValueBlock prints label/value rows at the fixed position above,
+// beside a WindowEnvelopeHeader's windows — invoice/estimate/statement
+// metadata (number, date, due date, status, ...) that on a windowed
+// document belongs in this now-empty corner rather than KeyValueRow's
+// normal content flow. Doesn't touch the document's cursor, so the
+// caller's next call (CenteredTitle, ...) continues wherever
+// WindowEnvelopeHeader left it.
+func (d *Document) KeyValueBlock(rows [][2]string) {
+	// Save and restore the document's normal cursor — every row below
+	// draws at an absolute (x, y) of its own, and without this the last
+	// such SetXY would become the position the caller's next flowing call
+	// (Spacer, BorderlessTable, ...) continues from, corrupting the main
+	// content layout instead of leaving it exactly where
+	// WindowEnvelopeHeader left it.
+	x0, y0 := d.pdf.GetXY()
+	const labelW = 30.0
+	y := envMetaY
+	for _, r := range rows {
+		d.pdf.SetXY(envMetaX, y)
+		d.pdf.SetFont("Helvetica", "B", 9)
+		d.pdf.CellFormat(labelW, 5.5, d.tr(r[0]), "", 0, "L", false, 0, "")
+		d.pdf.SetFont("Helvetica", "", 9)
+		d.pdf.CellFormat(envMetaW-labelW, 5.5, d.tr(d.truncate(r[1], envMetaW-labelW-2)), "", 0, "L", false, 0, "")
+		y += 5.5
+	}
+	d.pdf.SetXY(x0, y0)
 }
 
 // Subtitle prints a smaller line under the title, e.g. a date range or

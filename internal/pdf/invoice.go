@@ -41,10 +41,12 @@ func RenderInvoice(business, billTo Party, inv *denarixv1.Invoice, breakdown []T
 	}
 	d.CenteredTitle(title)
 
-	d.KeyValueRow("Invoice Number", inv.GetInvoiceNumber())
-	d.KeyValueRow("Invoice Date", formatProtoDate(inv.GetInvoiceDate()))
-	d.KeyValueRow("Due Date", formatProtoDate(inv.GetDueDate()))
-	d.KeyValueRow("Status", inv.GetStatus())
+	d.KeyValueBlock([][2]string{
+		{"Invoice Number", inv.GetInvoiceNumber()},
+		{"Invoice Date", formatProtoDate(inv.GetInvoiceDate())},
+		{"Due Date", formatProtoDate(inv.GetDueDate())},
+		{"Status", inv.GetStatus()},
+	})
 	d.Spacer(4)
 
 	cols := []TableColumn{
