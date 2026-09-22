@@ -522,10 +522,11 @@ func (d *Document) Table(cols []TableColumn, rows [][]string, totalRow []string)
 
 // BorderlessTable renders the same shape as Table — a header row, one row
 // per entry, and (if totalRow is non-nil) a bold total row — but with no
-// grid lines at all, vertical or horizontal: bold weight and whitespace
-// alone separate the header and total rows from the data, for a flatter,
-// more modern look. Used by every report and trading document in this
-// package. Like Table, its header row reprints at the top of every
+// grid lines at all, vertical or horizontal: a light gray fill picks the
+// header row out from the data (no line needed for that), and bold weight
+// plus whitespace alone set the total row apart, for a flatter, more
+// modern look. Used by every report and trading document in this package.
+// Like Table, its header row (fill included) reprints at the top of every
 // continuation page for as long as the table is rendering (see
 // activeTableHeader).
 func (d *Document) BorderlessTable(cols []TableColumn, rows [][]string, totalRow []string) {
@@ -536,8 +537,9 @@ func (d *Document) BorderlessTable(cols []TableColumn, rows [][]string, totalRow
 
 	printHeader := func() {
 		d.pdf.SetFont("Helvetica", "B", 9)
+		d.pdf.SetFillColor(reportBarGray[0], reportBarGray[1], reportBarGray[2])
 		for i, c := range cols {
-			d.pdf.CellFormat(widths[i], 7, d.tr(c.Header), "", 0, alignOf(c.Right), false, 0, "")
+			d.pdf.CellFormat(widths[i], 7, d.tr(c.Header), "", 0, alignOf(c.Right), true, 0, "")
 		}
 		d.pdf.Ln(-1)
 		d.pdf.Ln(1)
