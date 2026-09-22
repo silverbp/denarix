@@ -219,16 +219,16 @@ func (d *Document) partyColumn(x, y, w float64, p Party) float64 {
 }
 
 // Fixed window positions for a standard double-window #10 invoice envelope
-// on US Letter paper, tri-folded — the convention most double-window
-// invoice envelope products (and Word's own double-window envelope
-// template) are built around: a return-address window near the top-left,
-// a delivery-address window lower and offset to the right. Exact offsets
-// vary a little between envelope manufacturers, so these leave generous
-// padding inside each window; verify against actual envelope stock before
-// a real print run.
+// on US Letter paper, tri-folded — both windows sit on the same left edge,
+// stacked vertically (a small return-address window above a larger
+// delivery-address window), which is what the physical product looks like;
+// they are not side by side. Exact offsets vary a little between envelope
+// manufacturers, so these leave generous padding inside each window;
+// verify against actual envelope stock before a real print run.
 const (
-	envReturnX, envReturnY, envReturnW, envReturnH         = 12.7, 12.7, 88.9, 19.05 // 0.5in, 0.5in, 3.5in, 0.75in
-	envDeliveryX, envDeliveryY, envDeliveryW, envDeliveryH = 101.6, 61.0, 88.9, 25.4 // 4in, 2.4in, 3.5in, 1in
+	envLeft                                  = 12.7              // 0.5in, shared by both windows
+	envReturnY, envReturnW, envReturnH       = 12.7, 88.9, 19.05 // 0.5in, 3.5in, 0.75in
+	envDeliveryY, envDeliveryW, envDeliveryH = 61.0, 101.6, 25.4 // 2.4in, 4in, 1in
 )
 
 // WindowEnvelopeHeader prints business (the return address) and recipient
@@ -241,8 +241,8 @@ const (
 // caller's next call (CenteredTitle, ReportHeader, ...) continues in the
 // normal content flow.
 func (d *Document) WindowEnvelopeHeader(business, recipient Party) {
-	d.windowBlock(envReturnX, envReturnY, envReturnW, envReturnH, business)
-	d.windowBlock(envDeliveryX, envDeliveryY, envDeliveryW, envDeliveryH, recipient)
+	d.windowBlock(envLeft, envReturnY, envReturnW, envReturnH, business)
+	d.windowBlock(envLeft, envDeliveryY, envDeliveryW, envDeliveryH, recipient)
 	d.pdf.SetXY(marginLeft, envDeliveryY+envDeliveryH+6)
 }
 
